@@ -1,10 +1,11 @@
 #!/bin/bash
 # acme申请证书脚本
 # 使用方法：手动执行./acme.sh
-set -e
+
+set -eo pipefail  # 核心安全控制：1. 任意命令执行失败(返回非0)立即终止脚本；2. 管道命令中任意环节失败，整个管道视为失败，避免隐藏错误
 
 #######################################
-# 颜色定义（仅保留必要标识）
+# 颜色定义
 #######################################
 RED='\033[0;31m'      # 错误消息
 GREEN='\033[0;32m'    # 成功消息和主标题颜色
@@ -20,7 +21,7 @@ DEFAULT_TARGET_CERT="/root/cert.crt"       # 目标证书路径
 DEFAULT_TARGET_KEY="/root/private.key"     # 目标私钥路径
 
 #######################################
-# 函数：时间格式转换（优化后：严格输出 YYYY-MM-DD HH:MM:SS 格式）
+# 函数：时间格式转换（严格输出 YYYY-MM-DD HH:MM:SS 格式）
 #######################################
 convert_cert_time() {
     local raw_time="$1"
@@ -56,7 +57,56 @@ get_formatted_file_size() {
 }
 
 #######################################
-# 主体功能：检查并安装 git
+# 函数：删除acme.sh定时任务
+#######################################
+delete_acme_crontab() {
+    echo -e "\n${YELLOW}🔍 正在自动删除acme.sh定时任务...${NC}"
+    # 临时文件存储过滤后的crontab内容
+    local tmp_crontab=$(mktemp)
+    # 导出当前crontab，过滤掉所有包含 "acme.sh --cron" 的行，保存到临时文件
+    crontab -l 2>/dev/null | grep -v "acme.sh --cron" > "$tmp_crontab"
+    # 统计被删除的任务数量
+    local original_count=$(crontab -l 2>/dev/null | wc -l)
+    local new_count=$(wc -l < "$tmp_crontab")
+    local deleted_count=$((original_count - new_count))
+
+    if [ $deleted_count -gt 0 ]; then
+        # 重新加载过滤后的crontab
+        crontab "$tmp_crontab"
+        echo -e "${GREEN}✅ 成功删除 ${deleted_count} 个acme.sh定时任务${NC}"
+    else
+        echo -e "${BLUE}ℹ️  未检测到acme.sh定时任务，无需删除${NC}"
+    fi
+    # 删除临时文件
+    rm -f "$tmp_crontab"
+}
+
+#######################################
+# 函数检查80端口是否被占用
+# 解决证书申请时80端口被占用导致的失败问题
+#######################################
+check_80_port() {
+    echo -e "\n${YELLOW}🔍 检查80端口是否被占用...${NC}"
+    local port_used=$(ss -tulpn | grep ':80' | grep -v 'LISTEN' | wc -l)
+    if [ $port_used -gt 0 ]; then
+        echo -e "${RED}❌ 80端口已被占用，以下是占用进程：${NC}"
+        ss -tulpn | grep ':80'
+        echo -e "${YELLOW}⚠️  是否强制杀死占用80端口的进程？(y/n)${NC}"
+        read -p "" KILL_PROC
+        if [ "$KILL_PROC" = "y" ] || [ "$KILL_PROC" = "Y" ]; then
+            ss -tulpn | grep ':80' | awk '{print $7}' | cut -d',' -f2 | cut -d'=' -f2 | xargs -r kill -9
+            echo -e "${GREEN}✅ 已强制杀死占用80端口的进程${NC}"
+        else
+            echo -e "${RED}❌ 80端口被占用，证书申请无法继续，请手动释放端口后重新执行脚本${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}✅ 80端口未被占用，可以继续申请证书${NC}"
+    fi
+}
+
+#######################################
+# 检查并安装 git
 #######################################
 echo -e "${YELLOW}🔍 正在检查 git 是否已安装...${NC}"
 if ! command -v git >/dev/null 2>&1; then
@@ -111,6 +161,11 @@ while true; do
             ;;
         2)
             echo -e "${YELLOW}⚠️ 正在重置环境...${NC}"
+            # 【修复】重置环境时，增加完整的清理逻辑，避免残留文件导致的问题
+            echo -e "${YELLOW}🧹 正在清理acme.sh相关文件...${NC}"
+            rm -rf $ACME_HOME
+            rm -f $DEFAULT_TARGET_CERT $DEFAULT_TARGET_KEY
+            delete_acme_crontab
             echo -e "${GREEN}✅ 已清空 acme.sh 相关临时文件，准备重新部署。${NC}"
             echo -e "${YELLOW}📦 正在重新执行 acme.sh 官方安装脚本...${NC}"
             sleep 1
@@ -259,9 +314,14 @@ if [ -n "$EMAIL" ]; then
 fi
 
 #######################################
+# 检查80端口是否被占用（证书申请前的关键前置检查）
+#######################################
+check_80_port
+
+#######################################
 # 申请证书
 #######################################
-echo -e "${YELLOW}📜 开始通过80端口验证并申请证书（确保80端口空闲）...${NC}"
+echo -e "${YELLOW}🔐 开始通过80端口验证并申请证书（确保80端口未被占用）...${NC}"
 if ! ~/.acme.sh/acme.sh --issue --standalone -d $DOMAIN --server $CA_SERVER; then
     echo -e "${RED}❌ 证书申请失败，正在清理...${NC}"
     rm -f $DEFAULT_TARGET_CERT $DEFAULT_TARGET_KEY
@@ -291,6 +351,11 @@ chmod 600 $DEFAULT_TARGET_KEY
 echo -e "${GREEN}✅ 拷贝证书及权限配置完成${NC}"
 
 #######################################
+# 自动删除acme.sh定时任务（证书配置完成后，自动执行）
+#######################################
+delete_acme_crontab
+
+#######################################
 # 证书申请成功后，精准输出信息
 #######################################
 # 定义必要路径变量（用于填充信息）
@@ -298,7 +363,15 @@ ECC_CERT_DIR="$ACME_HOME/${DOMAIN}_ecc"
 ACME_CERT_FILE="$ECC_CERT_DIR/fullchain.cer"
 ACME_KEY_FILE="$ECC_CERT_DIR/$DOMAIN.key"
 
-# 提取并格式化证书时间（优化核心：去除多余字符，确保解析准确）
+# 证书文件存在性检查，避免后续命令执行失败
+if [ ! -f "$ACME_CERT_FILE" ] || [ ! -f "$ACME_KEY_FILE" ]; then
+    echo -e "${YELLOW}⚠️  未找到ECC证书文件，尝试使用非ECC证书路径...${NC}"
+    ECC_CERT_DIR="$ACME_HOME/${DOMAIN}"
+    ACME_CERT_FILE="$ECC_CERT_DIR/fullchain.cer"
+    ACME_KEY_FILE="$ECC_CERT_DIR/$DOMAIN.key"
+fi
+
+# 提取并格式化证书时间（去除多余字符，确保解析准确）
 cert_dates=$(openssl x509 -in "$ACME_CERT_FILE" -noout -dates 2>/dev/null)
 # 使用sed去除前缀和多余空格，避免格式干扰
 not_before_raw=$(echo "$cert_dates" | grep "notBefore" | sed 's/notBefore=//g' | sed 's/^[ \t]*//g')
@@ -336,22 +409,34 @@ echo -e "  源证书文件: $ACME_CERT_FILE"
 echo -e "  源私钥文件: $ACME_KEY_FILE"
 echo -e "${GREEN}证书文件路径检查通过${NC}"
 
-# 当前证书状态（动态文件大小+真实修改时间）
+# 当前证书状态
 echo -e "\n${GREEN}[当前证书状态]${NC}"
-echo -e "目标证书文件状态: ${GREEN}证书文件存在${NC}"
+# 检查证书和私钥是否存在
+if [ -f "$ACME_CERT_FILE" ]; then
+    cert_status="${GREEN}证书文件存在${NC}"
+else
+    cert_status="${RED}证书文件不存在${NC}"
+fi
+if [ -f "$ACME_KEY_FILE" ]; then
+    key_status="${GREEN}私钥文件存在${NC}"
+else
+    key_status="${RED}私钥文件不存在${NC}"
+fi
+echo -e "目标证书文件状态: $cert_status"
+echo -e "目标私钥文件状态: $key_status"
 echo -e "文件详情:"
 echo -e "  证书文件: $DEFAULT_TARGET_CERT"
+echo -e "  私钥文件: $DEFAULT_TARGET_KEY"
 echo -e "  文件大小: $cert_real_size (证书), $key_real_size (私钥)"
 echo -e "  最后修改: $cert_mtime (证书), $key_mtime (私钥)"
 echo -e "文件权限:"
-# 动态输出真实文件权限（非固定，适配实际情况）
+# 动态输出真实文件权限
 ls -la "$ACME_CERT_FILE" "$ACME_KEY_FILE" 2>/dev/null | awk '{print $1, $3, $4, $5, $6, $7, $8, $9}' | sed "s|$ECC_CERT_DIR/fullchain.cer|$DEFAULT_TARGET_CERT|g; s|$ECC_CERT_DIR/$DOMAIN.key|$DEFAULT_TARGET_KEY|g"
 
 # 证书有效期（严格匹配 YYYY-MM-DD HH:MM:SS 格式）
 echo -e "\n${GREEN}[证书有效期]${NC}"
 echo -e "  生效时间: ${YELLOW}$not_before${NC}"
 echo -e "  到期时间: ${YELLOW}$not_after${NC}"
-
 
 # 检查目标证书有效期
 echo -e "\n${GREEN}[检查目标证书有效期]${NC}"
