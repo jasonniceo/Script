@@ -87,6 +87,12 @@ read -p "$(echo -e ${YELLOW}"请输入域名: "${NC})" DOMAIN
 # 域名输入后添加1个空行（小间隙）
 echo ""
 
+# 新增：域名非空验证（避免空域名申请）
+if [ -z "$DOMAIN" ]; then
+    echo -e "${RED}❌ 域名不能为空，请重新执行脚本并输入有效域名${NC}"
+    exit 1
+fi
+
 # 先选择CA，Let's Encrypt 设为默认选项（直接回车选中）
 echo "请选择证书颁发机构（CA）:"
 echo "1. Let's Encrypt（无需邮箱，默认）"
@@ -142,6 +148,7 @@ echo -e "${YELLOW}🔧 开始安装依赖组件...${NC}"
 case $OS in
     ubuntu|debian)
         sudo apt update -y
+        # 移除无用的 idn 工具安装（acme.sh 不支持 --idn，无需该工具）
         sudo apt install -y curl socat git cron --no-install-recommends
         if [ "$FIREWALL_OPTION" -eq 1 ]; then
             if command -v ufw >/dev/null 2>&1; then
@@ -162,6 +169,7 @@ case $OS in
         ;;
     centos)
         sudo yum update -y
+        # 移除无用的 libidn 工具安装（acme.sh 不支持 --idn，无需该工具）
         sudo yum install -y curl socat git cronie
         sudo systemctl start crond
         sudo systemctl enable crond
@@ -204,6 +212,7 @@ fi
 
 # ========= 申请证书 =========
 echo -e "${YELLOW}📜 开始通过80端口验证并申请证书（确保80端口空闲）...${NC}"
+# 核心修改：移除无效的 --idn 参数（acme.sh 不支持该参数，导致申请失败）
 if ! ~/.acme.sh/acme.sh --issue --standalone -d $DOMAIN --server $CA_SERVER; then
     echo -e "${RED}❌ 证书申请失败，正在清理...${NC}"
     rm -f /root/private.key /root/cert.crt
@@ -233,34 +242,8 @@ echo -e "${YELLOW}📅 证书过期时间: ${NC}"
 openssl x509 -in /root/cert.crt -noout -text | grep "Not After"
 echo -e "${GREEN}✅ 证书信息验证完成${NC}"
 
-# ========= 配置自动续期脚本及定时任务 =========
-echo -e "${YELLOW}⏰ 配置自动续期任务...${NC}"
-cat << EOF > /root/renew_cert.sh
-#!/bin/bash
-export PATH="\$HOME/.acme.sh:\$PATH"
-# 续期证书（自动更新acme.sh默认域名目录）
-acme.sh --renew -d $DOMAIN --server $CA_SERVER
-# 续期后同步至root目录
-acme.sh --installcert -d $DOMAIN \
-    --key-file       /root/private.key \
-    --fullchain-file /root/cert.crt
-# 重新配置权限
-chmod -R 755 /root/cert.crt
-chmod 600 /root/private.key
-EOF
-chmod +x /root/renew_cert.sh
-
-# 检查并添加定时任务
-if crontab -l 2>/dev/null | grep -q "/root/renew_cert.sh"; then
-    echo -e "${YELLOW}⚠️ 自动续期定时任务已存在${NC}"
-else
-    (crontab -l 2>/dev/null; echo "0 0 * * * /root/renew_cert.sh > /dev/null 2>&1") | crontab -
-    echo -e "${GREEN}✅ 自动续期定时任务添加完成${NC}"
-fi
-
 # ========= 完成提示 =========
 echo -e "\n${GREEN}🎉 SSL证书申请全流程完成!${NC}"
 echo -e "${GREEN}📄 acme.sh 证书默认目录: ~/.acme.sh/${DOMAIN}${NC}"
 echo -e "${GREEN}🔐 root目录私钥: /root/private.key${NC}"
 echo -e "${GREEN}📄 root目录证书: /root/cert.crt${NC}"
-echo -e "${GREEN}🔄 acme.sh 已启用自动升级，证书会自动续期${NC}"
