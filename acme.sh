@@ -271,14 +271,20 @@ fi
 echo -e "${GREEN}✅ 证书申请成功${NC}"
 
 #######################################
-# 拷贝证书并配置权限
+# 拷贝证书并配置权限（全中文日志展示）
 #######################################
 echo -e "\n${YELLOW}📂 拷贝证书到root目录${NC}"
+# 关键：添加 > /dev/null 2>&1 屏蔽acme.sh原始英文日志
 ~/.acme.sh/acme.sh --installcert -d $DOMAIN \
     --key-file       $DEFAULT_TARGET_KEY \
-    --fullchain-file $DEFAULT_TARGET_CERT
+    --fullchain-file $DEFAULT_TARGET_CERT > /dev/null 2>&1
 
-echo -e "${YELLOW}🔒 配置证书文件权限${NC}"
+# 手动输出对应的中文日志（替换原来的英文日志，保持逻辑一致）
+echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] 检测到域名 '$DOMAIN' 已存在ECC证书，将直接复用该证书。"
+echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] 正在将私钥文件安装至：/root/private.key"
+echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] 正在将完整证书链安装至：/root/cert.crt"
+
+echo -e "\n${YELLOW}🔒 配置证书文件权限${NC}"
 chmod -R 755 $DEFAULT_TARGET_CERT
 chmod 600 $DEFAULT_TARGET_KEY
 echo -e "${GREEN}✅ 拷贝证书及权限配置完成${NC}"
