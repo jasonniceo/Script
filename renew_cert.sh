@@ -175,37 +175,49 @@ convert_cert_time() {
 #######################################
 show_cert_status() {
     echo -e "\n${GREEN}[当前证书状态]${NC}"
-    
-    # 检查目标证书是否存在
-    if [ -f "$TARGET_CERT" ] && [ -f "$TARGET_KEY" ]; then
-        # 显示目标证书存在状态
-        echo -e "目标证书文件状态: ${GREEN}证书文件存在${NC}"
-        
-        # 显示文件大小和修改时间
-        echo -e "文件详情:"
-        echo -e "  证书文件: $TARGET_CERT"
-        echo -e "  文件大小: $(du -h "$TARGET_CERT" 2>/dev/null | cut -f1) (证书), $(du -h "$TARGET_KEY" 2>/dev/null | cut -f1) (私钥)"
-        echo -e "  最后修改: $(date -r "$TARGET_CERT" '+%Y-%m-%d %H:%M:%S' 2>/dev/null) (证书), $(date -r "$TARGET_KEY" '+%Y-%m-%d %H:%M:%S' 2>/dev/null) (私钥)"
-        
-        echo -e "文件权限:"
-        ls -la "$TARGET_KEY" "$TARGET_CERT" 2>/dev/null || echo -e "${YELLOW}无法获取文件信息${NC}"
-        
-        echo -e "\n${GREEN}[证书有效期]${NC}"
-        # 解析并格式化证书有效期
-        local cert_dates=$(openssl x509 -in "$TARGET_CERT" -noout -dates 2>/dev/null)
-        if [ -n "$cert_dates" ]; then
-            # 提取notBefore和notAfter并转换格式
-            local not_before_raw=$(echo "$cert_dates" | grep "notBefore" | cut -d= -f2)
-            local not_after_raw=$(echo "$cert_dates" | grep "notAfter" | cut -d= -f2)
-            local not_before=$(convert_cert_time "$not_before_raw")
-            local not_after=$(convert_cert_time "$not_after_raw")
-            echo -e "  生效时间: ${YELLOW}${not_before}${NC}"
-            echo -e "  到期时间: ${YELLOW}${not_after}${NC}"
-        else
-            echo -e "${RED}无法读取证书信息${NC}"
-        fi
+    # 检查证书和私钥是否存在
+    if [ -f "$ACME_CERT_FILE" ]; then
+        cert_status="${GREEN}证书文件存在${NC}"
     else
-        echo -e "${YELLOW}目标证书不存在，将进行首次复制${NC}"
+        cert_status="${RED}证书文件不存在${NC}"
+    fi
+    if [ -f "$ACME_KEY_FILE" ]; then
+        key_status="${GREEN}私钥文件存在${NC}"
+    else
+        key_status="${RED}私钥文件不存在${NC}"
+    fi
+
+    # 补充变量赋值：文件大小和最后修改时间
+    cert_real_size=$(du -h "$ACME_CERT_FILE" 2>/dev/null | cut -f1)
+    key_real_size=$(du -h "$ACME_KEY_FILE" 2>/dev/null | cut -f1)
+    cert_mtime=$(date -r "$ACME_CERT_FILE" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)
+    key_mtime=$(date -r "$ACME_KEY_FILE" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)
+    
+    # 输出状态
+    echo -e "目标证书文件状态: $cert_status"
+    echo -e "目标私钥文件状态: $key_status"
+    echo -e "文件详情:"
+    echo -e "  证书文件: $DEFAULT_TARGET_CERT"
+    echo -e "  私钥文件: $DEFAULT_TARGET_KEY"
+    echo -e "  文件大小: $cert_real_size (证书), $key_real_size (私钥)"
+    echo -e "  最后修改: $cert_mtime (证书), $key_mtime (私钥)"
+    echo -e "文件权限:"
+    # 动态输出真实文件权限，并重命名展示路径
+    ls -la "$ACME_CERT_FILE" "$ACME_KEY_FILE" 2>/dev/null | awk '{print $1, $3, $4, $5, $6, $7, $8, $9}' | sed "s|$ECC_CERT_DIR/fullchain.cer|$DEFAULT_TARGET_CERT|g; s|$ECC_CERT_DIR/$DOMAIN.key|$DEFAULT_TARGET_KEY|g"
+
+    echo -e "\n${GREEN}[证书有效期]${NC}"
+    # 解析并格式化证书有效期
+    local cert_dates=$(openssl x509 -in "$DEFAULT_TARGET_CERT" -noout -dates 2>/dev/null)
+    if [ -n "$cert_dates" ]; then
+        # 提取notBefore和notAfter并转换格式
+        local not_before_raw=$(echo "$cert_dates" | grep "notBefore" | cut -d= -f2)
+        local not_after_raw=$(echo "$cert_dates" | grep "notAfter" | cut -d= -f2)
+        local not_before=$(convert_cert_time "$not_before_raw")
+        local not_after=$(convert_cert_time "$not_after_raw")
+        echo -e "  生效时间: ${YELLOW}${not_before}${NC}"
+        echo -e "  到期时间: ${YELLOW}${not_after}${NC}"
+    else
+        echo -e "${RED}无法读取证书信息${NC}"
     fi
 }
 
@@ -219,6 +231,12 @@ check_cert_expiry() {
     # 检查证书文件是否存在
     if [ ! -f "$cert_file" ]; then
         echo -e "${RED}错误：证书文件不存在${NC}"
+        return 2
+    fi
+    
+    # 检查openssl命令是否存在
+    if ! command -v openssl &>/dev/null; then
+        echo -e "${RED}错误：系统未安装openssl，无法解析证书有效期${NC}"
         return 2
     fi
     
@@ -298,35 +316,35 @@ copy_certificate_files() {
     fi
     
     # 备份旧证书（如果存在）
-    if [ -f "$TARGET_CERT" ]; then
+    if [ -f "$DEFAULT_TARGET_CERT" ]; then
         local backup_dir="/root/cert_backup/$(date '+%Y-%m-%d_%H-%M-%S')"
         mkdir -p "$backup_dir"
-        cp "$TARGET_CERT" "$backup_dir/cert.crt.backup"
-        cp "$TARGET_KEY" "$backup_dir/private.key.backup"
+        cp "$DEFAULT_TARGET_CERT" "$backup_dir/cert.crt.backup"
+        cp "$DEFAULT_TARGET_KEY" "$backup_dir/private.key.backup"
         echo -e "旧证书已备份到: $backup_dir"
     fi
     
     # 复制证书文件
     echo -e "复制证书文件..."
     echo -e "  从: $ACME_CERT_FILE"
-    echo -e "  到: $TARGET_CERT"
-    cp -f "$ACME_CERT_FILE" "$TARGET_CERT"
+    echo -e "  到: $DEFAULT_TARGET_CERT"
+    cp -f "$ACME_CERT_FILE" "$DEFAULT_TARGET_CERT"
     
     echo -e "复制私钥文件..."
     echo -e "  从: $ACME_KEY_FILE"
-    echo -e "  到: $TARGET_KEY"
-    cp -f "$ACME_KEY_FILE" "$TARGET_KEY"
+    echo -e "  到: $DEFAULT_TARGET_KEY"
+    cp -f "$ACME_KEY_FILE" "$DEFAULT_TARGET_KEY"
     
     # 设置文件权限
     echo -e "设置文件权限..."
-    chmod 644 "$TARGET_CERT"  # 证书：所有人可读
-    chmod 600 "$TARGET_KEY"   # 私钥：仅所有者可读写
+    chmod 644 "$DEFAULT_TARGET_CERT"  # 证书：所有人可读
+    chmod 600 "$DEFAULT_TARGET_KEY"   # 私钥：仅所有者可读写
     
     # 验证复制结果
-    if [ -f "$TARGET_CERT" ] && [ -f "$TARGET_KEY" ]; then
+    if [ -f "$DEFAULT_TARGET_CERT" ] && [ -f "$DEFAULT_TARGET_KEY" ]; then
         echo -e "${GREEN}证书文件复制完成${NC}"
         echo -e "文件权限:"
-        ls -la "$TARGET_KEY" "$TARGET_CERT"
+        ls -la "$DEFAULT_TARGET_KEY" "$DEFAULT_TARGET_CERT"
         return 0
     else
         echo -e "${RED}错误：证书文件复制失败${NC}"
@@ -468,6 +486,13 @@ restart_panel_services() {
 # 函数：主执行流程
 #######################################
 main() {
+    # 检查openssl命令是否存在（全局前置检查）
+    if ! command -v openssl &>/dev/null; then
+        echo -e "${RED}错误：系统未安装openssl，脚本无法正常运行${NC}"
+        echo -e "请先安装openssl：yum install openssl -y 或 apt install openssl -y"
+        exit 1
+    fi
+
     # 显示脚本头部
     show_header
     
@@ -523,7 +548,7 @@ main() {
     
     echo -e "\n${GREEN}[配置信息]${NC}"
     echo -e "域名: ${YELLOW}$DOMAIN${NC}"
-    echo -e "续期阈值: ${YELLOW}$DEFAULT_RENEW_THRESHOLD 天${NC}"
+    echo -e "续期阈值: ${YELLOW}$RENEW_THRESHOLD 天${NC}"
     echo -e "强制续期: ${YELLOW}$FORCE_RENEW${NC}"
     echo -e "目标证书路径: ${YELLOW}$DEFAULT_TARGET_CERT${NC}"
     echo -e "目标私钥路径: ${YELLOW}$DEFAULT_TARGET_KEY${NC}"
@@ -548,7 +573,7 @@ main() {
         if [ "$FORCE_RENEW" = true ]; then
             echo -e "${YELLOW}强制续期模式：跳过有效期检查，直接执行续期${NC}"
             need_renewal=true
-        elif check_cert_expiry "$DEFAULT_TARGET_CERT" "$DEFAULT_RENEW_THRESHOLD"; then
+        elif check_cert_expiry "$DEFAULT_TARGET_CERT" "$RENEW_THRESHOLD"; then
             need_renewal=true
         fi
     else
@@ -610,7 +635,7 @@ main() {
 
 # 设置变量
 DOMAIN=""
-RENEW_THRESHOLD="$DEFAULT_RENEW_THRESHOLD"
+RENEW_THRESHOLD="$DEFAULT_RENEW_THRESHOLD"  # 统一变量，确保生效
 TARGET_CERT="$DEFAULT_TARGET_CERT"
 TARGET_KEY="$DEFAULT_TARGET_KEY"
 CHECK_ONLY=false
