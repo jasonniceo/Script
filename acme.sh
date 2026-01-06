@@ -9,6 +9,7 @@ set -e
 RED='\033[0;31m'      # 错误消息
 GREEN='\033[0;32m'    # 成功消息和主标题颜色
 YELLOW='\033[1;33m'   # 警告消息
+BLUE='\033[0;34m'     # 信息消息
 NC='\033[0m'          # 重置颜色
 
 #######################################
@@ -323,43 +324,44 @@ if [ -z "$cert_mtime" ]; then cert_mtime="$not_before"; fi
 if [ -z "$key_mtime" ]; then key_mtime="$not_before"; fi
 
 # 配置信息
-echo -e "\n[配置信息]"
-echo -e "域名: $DOMAIN"
-echo -e "目标证书路径: $DEFAULT_TARGET_CERT"
-echo -e "目标私钥路径: $DEFAULT_TARGET_KEY"
+echo -e "\n${GREEN}[配置信息]${NC}"
+echo -e "域名: ${YELLOW}$DOMAIN${NC}"
+echo -e "目标证书路径: ${YELLOW}$DEFAULT_TARGET_CERT${NC}"
+echo -e "目标私钥路径: ${YELLOW}$DEFAULT_TARGET_KEY${NC}"
 
 # 检查证书路径
-echo -e "\n[检查证书路径]"
+echo -e "\n${GREEN}[检查证书路径]${NC}"
 echo -e "  ACME证书目录: $ECC_CERT_DIR"
 echo -e "  源证书文件: $ACME_CERT_FILE"
 echo -e "  源私钥文件: $ACME_KEY_FILE"
-echo -e "证书文件路径检查通过"
+echo -e "${GREEN}证书文件路径检查通过${NC}"
 
 # 当前证书状态（动态文件大小+真实修改时间）
-echo -e "\n[当前证书状态]"
-echo -e "目标证书文件状态: 证书文件存在"
+echo -e "\n${GREEN}[当前证书状态]${NC}"
+echo -e "目标证书文件状态: ${GREEN}证书文件存在${NC}"
 echo -e "文件详情:"
 echo -e "  证书文件: $DEFAULT_TARGET_CERT"
-echo -e "  文件大小: $cert_real_size (证书), $key_real_size (私钥)"  # 动态填充真实大小
-echo -e "  最后修改: $cert_mtime (证书), $key_mtime (私钥)"        # 动态填充真实修改时间
+echo -e "  文件大小: $cert_real_size (证书), $key_real_size (私钥)"
+echo -e "  最后修改: $cert_mtime (证书), $key_mtime (私钥)"
 echo -e "文件权限:"
 # 动态输出真实文件权限（非固定，适配实际情况）
 ls -la "$ACME_CERT_FILE" "$ACME_KEY_FILE" 2>/dev/null | awk '{print $1, $3, $4, $5, $6, $7, $8, $9}' | sed "s|$ECC_CERT_DIR/fullchain.cer|$DEFAULT_TARGET_CERT|g; s|$ECC_CERT_DIR/$DOMAIN.key|$DEFAULT_TARGET_KEY|g"
 
 # 证书有效期（严格匹配 YYYY-MM-DD HH:MM:SS 格式）
-echo -e "\n[证书有效期]"
-echo -e "  生效时间: $not_before"
-echo -e "  到期时间: $not_after"
+echo -e "\n${GREEN}[证书有效期]${NC}"
+echo -e "  生效时间: ${YELLOW}$not_before${NC}"
+echo -e "  到期时间: ${YELLOW}$not_after${NC}"
+
 
 # 检查目标证书有效期
-echo -e "\n[检查目标证书有效期]"
-echo -e "证书到期时间: $not_after"
-echo -e "剩余天数: $remain_days 天"
-echo -e "证书有效期充足"
+echo -e "\n${GREEN}[检查目标证书有效期]${NC}"
+echo -e "证书到期时间: ${YELLOW}$not_after${NC}"
+echo -e "剩余天数: ${YELLOW}$remain_days 天${NC}"
+echo -e "${GREEN}证书有效期充足${NC}"
 
-echo -e "\n==================================================="
-echo -e "            脚本执行完成"
-echo -e "==================================================="
+echo -e "\n${GREEN}===================================================${NC}"
+echo -e "${GREEN}            脚本执行完成${NC}"
+echo -e "${GREEN}===================================================${NC}"
 echo -e "完成时间: $(date '+%Y-%m-%d %H:%M:%S')"
 echo -e "域名: $DOMAIN"
 echo -e "证书位置: /root/cert.crt"
