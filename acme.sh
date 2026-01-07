@@ -21,6 +21,31 @@ DEFAULT_TARGET_CERT="/root/cert.crt"       # 目标证书路径
 DEFAULT_TARGET_KEY="/root/private.key"     # 目标私钥路径
 
 #######################################
+# 函数：删除acme.sh定时任务（全局定义，确保所有场景可调用）
+#######################################
+delete_acme_crontab() {
+    echo -e "\n${YELLOW}🔍 正在自动删除acme.sh定时任务...${NC}"
+    # 临时文件存储过滤后的crontab内容
+    local tmp_crontab=$(mktemp)
+    # 导出当前crontab，过滤掉所有包含 "acme.sh --cron" 的行，保存到临时文件
+    crontab -l 2>/dev/null | grep -v "acme.sh --cron" > "$tmp_crontab"
+    # 统计被删除的任务数量
+    local original_count=$(crontab -l 2>/dev/null | wc -l)
+    local new_count=$(wc -l < "$tmp_crontab")
+    local deleted_count=$((original_count - new_count))
+
+    if [ $deleted_count -gt 0 ]; then
+        # 重新加载过滤后的crontab
+        crontab "$tmp_crontab"
+        echo -e "${GREEN}✅ 成功删除 ${deleted_count} 个acme.sh定时任务${NC}"
+    else
+        echo -e "${BLUE}ℹ️  未检测到acme.sh定时任务，无需删除${NC}"
+    fi
+    # 删除临时文件
+    rm -f "$tmp_crontab"
+}
+
+#######################################
 # 检查并安装 git
 #######################################
 echo -e "${YELLOW}🔍 正在检查 git 是否已安装...${NC}"
@@ -57,31 +82,6 @@ else
 fi
 
 #######################################
-# 函数：删除acme.sh定时任务
-#######################################
-delete_acme_crontab() {
-    echo -e "\n${YELLOW}🔍 正在自动删除acme.sh定时任务...${NC}"
-    # 临时文件存储过滤后的crontab内容
-    local tmp_crontab=$(mktemp)
-    # 导出当前crontab，过滤掉所有包含 "acme.sh --cron" 的行，保存到临时文件
-    crontab -l 2>/dev/null | grep -v "acme.sh --cron" > "$tmp_crontab"
-    # 统计被删除的任务数量
-    local original_count=$(crontab -l 2>/dev/null | wc -l)
-    local new_count=$(wc -l < "$tmp_crontab")
-    local deleted_count=$((original_count - new_count))
-
-    if [ $deleted_count -gt 0 ]; then
-        # 重新加载过滤后的crontab
-        crontab "$tmp_crontab"
-        echo -e "${GREEN}✅ 成功删除 ${deleted_count} 个acme.sh定时任务${NC}"
-    else
-        echo -e "${BLUE}ℹ️  未检测到acme.sh定时任务，无需删除${NC}"
-    fi
-    # 删除临时文件
-    rm -f "$tmp_crontab"
-}
-
-#######################################
 # SSL证书管理菜单
 #######################################
 while true; do
@@ -105,6 +105,7 @@ while true; do
             echo -e "${YELLOW}🧹 正在清理acme.sh相关文件...${NC}"
             rm -rf $ACME_HOME
             rm -f $DEFAULT_TARGET_CERT $DEFAULT_TARGET_KEY
+            # 场景2：重置环境时调用——清理残留定时任务
             delete_acme_crontab
             echo -e "${GREEN}✅ 已清空 acme.sh 相关临时文件，准备重新部署。${NC}"
             echo -e "${YELLOW}📦 正在重新执行 acme.sh 官方安装脚本...${NC}"
@@ -317,7 +318,7 @@ chmod 600 $DEFAULT_TARGET_KEY
 echo -e "${GREEN}✅ 拷贝证书及权限配置完成${NC}"
 
 #######################################
-# 自动删除acme.sh定时任务（证书配置完成后，自动执行）
+# 场景1：证书申请完成后调用——删除自动续期定时任务
 #######################################
 delete_acme_crontab
 
