@@ -29,6 +29,7 @@ DEFAULT_TARGET_CERT="/root/cert.crt"                  # 目标证书路径
 DEFAULT_TARGET_KEY="/root/private.key"                # 目标私钥路径
 LOG_DIR="./acme_cert_logs"                            # 日志存储目录
 LOG_FILE="${LOG_DIR}/acme_cert_$(date +%Y-%m-%d).log" # 按日期分割日志
+mkdir -p "$LOG_DIR"                                   # 确保日志目录存在
 
 #######################################
 # 日志初始化函数（基础工具，优先定义）
