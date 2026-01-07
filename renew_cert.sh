@@ -40,6 +40,13 @@ TARGET_CERT="$DEFAULT_TARGET_CERT"          # 目标证书路径（同步默认�
 TARGET_KEY="$DEFAULT_TARGET_KEY"            # 目标私钥路径（同步默认配置）
 CHECK_ONLY=false                            # 仅检查模式开关
 remain_days=0                               # 证书剩余有效天数（全局变量）
+# 新增全局变量：解决证书时间在汇总时无法显示的问题
+not_before=""                               # 证书生效时间（全局）
+not_after=""                                # 证书到期时间（全局）
+cert_real_size=""                           # 证书文件大小（全局）
+key_real_size=""                            # 私钥文件大小（全局）
+cert_mtime=""                               # 证书最后修改时间（全局）
+key_mtime=""                                # 私钥最后修改时间（全局）
 
 # 日志相关（修改：日志路径改为root下的renew_cert_logs文件夹，按日期分割）
 LOG_DIR="./renew_cert_logs"             # 日志存储目录（root下的renew_cert_logs）
@@ -224,7 +231,7 @@ show_cert_status() {
         key_status="${RED}私钥文件不存在${NC}"
     fi
 
-    # 获取文件基础信息
+    # 获取文件基础信息（赋值给全局变量）
     cert_real_size=$(du -h "$ACME_CERT_FILE" 2>/dev/null | cut -f1)
     key_real_size=$(du -h "$ACME_KEY_FILE" 2>/dev/null | cut -f1)
     cert_mtime=$(date -r "$ACME_CERT_FILE" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)
@@ -245,16 +252,17 @@ show_cert_status() {
     echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 证书状态：$cert_status，私钥状态：$key_status" >> "$LOG_FILE"
     echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 文件详情：证书=$DEFAULT_TARGET_CERT（大小=$cert_real_size，修改时间=$cert_mtime），私钥=$DEFAULT_TARGET_KEY（大小=$key_real_size，修改时间=$key_mtime）" >> "$LOG_FILE"
 
-    # 证书有效期解析
+    # 证书有效期解析（赋值给全局变量）
     echo -e "\n${GREEN}[证书有效期]${NC}"
     local cert_dates=$(openssl x509 -in "$DEFAULT_TARGET_CERT" -noout -dates 2>/dev/null)
-    local not_before=""
-    local not_after=""
     if [ -n "$cert_dates" ]; then
         local not_before_raw=$(echo "$cert_dates" | grep "notBefore" | cut -d= -f2)
         local not_after_raw=$(echo "$cert_dates" | grep "notAfter" | cut -d= -f2)
         not_before=$(convert_cert_time "$not_before_raw")
         not_after=$(convert_cert_time "$not_after_raw")
+    else
+        not_before="无法获取"
+        not_after="无法获取"
     fi
     
     # 计算剩余天数
@@ -717,47 +725,14 @@ main() {
         fi
     fi
     
-    # 步骤9：输出脚本执行完成汇总
+    # 步骤9：脚本结束汇总
     echo -e "\n${GREEN}===================================================${NC}"
-    echo -e "${GREEN}            脚本执行完成，证书信息汇总${NC}"
+    echo -e "${GREEN}            脚本执行完成${NC}"
     echo -e "${GREEN}===================================================${NC}"
     echo -e "完成时间: $(date '+%Y-%m-%d %H:%M:%S')"
-    echo -e "域名: ${YELLOW}$DOMAIN${NC}"
-    echo -e "证书生效时间: ${YELLOW}$not_before${NC}"
-    echo -e "证书到期时间: ${YELLOW}$not_after${NC}"
-    echo -e "剩余天数: ${YELLOW}$remain_days 天${NC}"    
-    echo -e "目标证书路径: ${YELLOW}$DEFAULT_TARGET_CERT${NC}"
-    echo -e "目标私钥路径: ${YELLOW}$DEFAULT_TARGET_KEY${NC}"
-    echo -e "文件大小: $cert_real_size (证书), $key_real_size (私钥)"
-    echo -e "最后修改: $cert_mtime (证书), $key_mtime (私钥)"
-    echo -e "文件权限:"
-    ls -la "$ACME_CERT_FILE" "$ACME_KEY_FILE" 2>/dev/null | awk '{print $1, $3, $4, $5, $6, $7, $8, $9}' | sed "s|$ECC_CERT_DIR/fullchain.cer|$DEFAULT_TARGET_CERT|g; s|$ECC_CERT_DIR/$DOMAIN.key|$DEFAULT_TARGET_KEY|g"
-
-    # 异常提醒：证书已过期
-    if [ "$remain_days" -lt 0 ]; then
-        echo -e "  ${RED}⚠️  异常：申请的证书已过期！${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 证书已过期，剩余天数=$remain_days" >> "$LOG_FILE"
-    fi
-
-    # 再次检查证书路径（确认最终状态）
-    echo -e "\n${GREEN}[检查证书路径]${NC}"
-    echo -e "  ACME证书目录: $ECC_CERT_DIR"
-    echo -e "  源证书文件: $ACME_CERT_FILE"
-    echo -e "  源私钥文件: $ACME_KEY_FILE"
-    echo -e "${GREEN}证书文件路径检查通过${NC}"
-
-    # 最终证书状态检查
-    echo -e "\n${GREEN}[证书状态]${NC}"
-    cert_status=${RED}"❌ 证书文件未生成"${NC}
-    [ -f "$ACME_CERT_FILE" ] && cert_status=${GREEN}"✅ 证书文件已生成"${NC}
-    key_status=${RED}"❌ 私钥文件未生成"${NC}
-    [ -f "$ACME_KEY_FILE" ] && key_status=${GREEN}"✅ 私钥文件已生成"${NC}
-
-    echo -e "  证书状态: $cert_status"
-    echo -e "  私钥状态: $key_status"
-    
-    # 写入脚本结束日志
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] 脚本执行完成\n===================================================\n" >> "$LOG_FILE"
+    echo -e "域名: $DOMAIN"
+    echo -e "证书位置: $DEFAULT_TARGET_CERT"
+    echo -e "私钥位置: $DEFAULT_TARGET_KEY"
 }
 
 #######################################
