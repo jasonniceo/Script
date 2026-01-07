@@ -21,91 +21,6 @@ DEFAULT_TARGET_CERT="/root/cert.crt"       # 目标证书路径
 DEFAULT_TARGET_KEY="/root/private.key"     # 目标私钥路径
 
 #######################################
-# 函数：时间格式转换（严格输出 YYYY-MM-DD HH:MM:SS 格式）
-#######################################
-convert_cert_time() {
-    local raw_time="$1"
-    # 强制输出指定格式，兼容acme.sh证书的原始时间格式
-    local converted_time=$(date -d "$raw_time" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)
-    # 容错处理：解析失败时返回标准格式默认值，而非"无法解析时间"
-    if [ -z "$converted_time" ]; then
-        echo "1970-01-01 00:00:00"
-    else
-        echo "$converted_time"
-    fi
-}
-
-#######################################
-# 函数：动态获取并格式化文件大小
-#######################################
-get_formatted_file_size() {
-    local file_path="$1"
-    # 检查文件是否存在
-    if [ ! -f "$file_path" ]; then
-        echo "0K"
-        return
-    fi
-    # 使用du命令获取人类可读的文件大小（自动适配K/M等单位）
-    # cut -f1 提取大小部分，去除文件路径
-    local file_size=$(du -h "$file_path" 2>/dev/null | cut -f1)
-    # 兼容无输出的情况
-    if [ -z "$file_size" ]; then
-        echo "0K"
-    else
-        echo "$file_size"
-    fi
-}
-
-#######################################
-# 函数：删除acme.sh定时任务
-#######################################
-delete_acme_crontab() {
-    echo -e "\n${YELLOW}🔍 正在自动删除acme.sh定时任务...${NC}"
-    # 临时文件存储过滤后的crontab内容
-    local tmp_crontab=$(mktemp)
-    # 导出当前crontab，过滤掉所有包含 "acme.sh --cron" 的行，保存到临时文件
-    crontab -l 2>/dev/null | grep -v "acme.sh --cron" > "$tmp_crontab"
-    # 统计被删除的任务数量
-    local original_count=$(crontab -l 2>/dev/null | wc -l)
-    local new_count=$(wc -l < "$tmp_crontab")
-    local deleted_count=$((original_count - new_count))
-
-    if [ $deleted_count -gt 0 ]; then
-        # 重新加载过滤后的crontab
-        crontab "$tmp_crontab"
-        echo -e "${GREEN}✅ 成功删除 ${deleted_count} 个acme.sh定时任务${NC}"
-    else
-        echo -e "${BLUE}ℹ️  未检测到acme.sh定时任务，无需删除${NC}"
-    fi
-    # 删除临时文件
-    rm -f "$tmp_crontab"
-}
-
-#######################################
-# 函数检查80端口是否被占用
-# 解决证书申请时80端口被占用导致的失败问题
-#######################################
-check_80_port() {
-    echo -e "\n${YELLOW}🔍 检查80端口是否被占用...${NC}"
-    local port_used=$(ss -tulpn | grep ':80' | grep -v 'LISTEN' | wc -l)
-    if [ $port_used -gt 0 ]; then
-        echo -e "${RED}❌ 80端口已被占用，以下是占用进程：${NC}"
-        ss -tulpn | grep ':80'
-        echo -e "${YELLOW}⚠️  是否强制杀死占用80端口的进程？(y/n)${NC}"
-        read -p "" KILL_PROC
-        if [ "$KILL_PROC" = "y" ] || [ "$KILL_PROC" = "Y" ]; then
-            ss -tulpn | grep ':80' | awk '{print $7}' | cut -d',' -f2 | cut -d'=' -f2 | xargs -r kill -9
-            echo -e "${GREEN}✅ 已强制杀死占用80端口的进程${NC}"
-        else
-            echo -e "${RED}❌ 80端口被占用，证书申请无法继续，请手动释放端口后重新执行脚本${NC}"
-            exit 1
-        fi
-    else
-        echo -e "${GREEN}✅ 80端口未被占用，可以继续申请证书${NC}"
-    fi
-}
-
-#######################################
 # 检查并安装 git
 #######################################
 echo -e "${YELLOW}🔍 正在检查 git 是否已安装...${NC}"
@@ -140,6 +55,31 @@ if ! command -v git >/dev/null 2>&1; then
 else
     echo -e "${GREEN}✅ git 已安装。${NC}"
 fi
+
+#######################################
+# 函数：删除acme.sh定时任务
+#######################################
+delete_acme_crontab() {
+    echo -e "\n${YELLOW}🔍 正在自动删除acme.sh定时任务...${NC}"
+    # 临时文件存储过滤后的crontab内容
+    local tmp_crontab=$(mktemp)
+    # 导出当前crontab，过滤掉所有包含 "acme.sh --cron" 的行，保存到临时文件
+    crontab -l 2>/dev/null | grep -v "acme.sh --cron" > "$tmp_crontab"
+    # 统计被删除的任务数量
+    local original_count=$(crontab -l 2>/dev/null | wc -l)
+    local new_count=$(wc -l < "$tmp_crontab")
+    local deleted_count=$((original_count - new_count))
+
+    if [ $deleted_count -gt 0 ]; then
+        # 重新加载过滤后的crontab
+        crontab "$tmp_crontab"
+        echo -e "${GREEN}✅ 成功删除 ${deleted_count} 个acme.sh定时任务${NC}"
+    else
+        echo -e "${BLUE}ℹ️  未检测到acme.sh定时任务，无需删除${NC}"
+    fi
+    # 删除临时文件
+    rm -f "$tmp_crontab"
+}
 
 #######################################
 # SSL证书管理菜单
@@ -314,6 +254,32 @@ if [ -n "$EMAIL" ]; then
 fi
 
 #######################################
+# 函数检查80端口是否被占用
+# 解决证书申请时80端口被占用导致的失败问题
+#######################################
+check_80_port() {
+    echo -e "\n${YELLOW}🔍 检查80端口是否被占用...${NC}"
+    # 修复点1：原逻辑错误，grep -v 'LISTEN'会过滤掉监听状态，改为只查LISTEN状态
+    local port_used=$(ss -tulpn | grep ':80' | grep 'LISTEN' | wc -l)
+    if [ $port_used -gt 0 ]; then
+        echo -e "${RED}❌ 80端口已被占用，以下是占用进程：${NC}"
+        ss -tulpn | grep ':80' | grep 'LISTEN'
+        echo -e "${YELLOW}⚠️  是否强制杀死占用80端口的进程？(y/n)${NC}"
+        read -p "" KILL_PROC
+        if [ "$KILL_PROC" = "y" ] || [ "$KILL_PROC" = "Y" ]; then
+            # 修复点2：精准提取PID，避免杀死无关进程
+            ss -tulpn | grep ':80' | grep 'LISTEN' | awk '{split($7,a,","); split(a[2],b,"="); print b[2]}' | xargs -r kill -9
+            echo -e "${GREEN}✅ 已强制杀死占用80端口的进程${NC}"
+        else
+            echo -e "${RED}❌ 80端口被占用，证书申请无法继续，请手动释放端口后重新执行脚本${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}✅ 80端口未被占用，可以继续申请证书${NC}"
+    fi
+}
+
+#######################################
 # 检查80端口是否被占用（证书申请前的关键前置检查）
 #######################################
 check_80_port
@@ -354,6 +320,42 @@ echo -e "${GREEN}✅ 拷贝证书及权限配置完成${NC}"
 # 自动删除acme.sh定时任务（证书配置完成后，自动执行）
 #######################################
 delete_acme_crontab
+
+#######################################
+# 函数：时间格式转换（严格输出 YYYY-MM-DD HH:MM:SS 格式）
+#######################################
+convert_cert_time() {
+    local raw_time="$1"
+    # 强制输出指定格式，兼容acme.sh证书的原始时间格式
+    local converted_time=$(date -d "$raw_time" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)
+    # 容错处理：解析失败时返回标准格式默认值，而非"无法解析时间"
+    if [ -z "$converted_time" ]; then
+        echo "1970-01-01 00:00:00"
+    else
+        echo "$converted_time"
+    fi
+}
+
+#######################################
+# 函数：动态获取并格式化文件大小
+#######################################
+get_formatted_file_size() {
+    local file_path="$1"
+    # 检查文件是否存在
+    if [ ! -f "$file_path" ]; then
+        echo "0K"
+        return
+    fi
+    # 使用du命令获取人类可读的文件大小（自动适配K/M等单位）
+    # cut -f1 提取大小部分，去除文件路径
+    local file_size=$(du -h "$file_path" 2>/dev/null | cut -f1)
+    # 兼容无输出的情况
+    if [ -z "$file_size" ]; then
+        echo "0K"
+    else
+        echo "$file_size"
+    fi
+}
 
 #######################################
 # 证书申请成功后，精准输出信息
@@ -437,10 +439,6 @@ ls -la "$ACME_CERT_FILE" "$ACME_KEY_FILE" 2>/dev/null | awk '{print $1, $3, $4, 
 echo -e "\n${GREEN}[证书有效期]${NC}"
 echo -e "  生效时间: ${YELLOW}$not_before${NC}"
 echo -e "  到期时间: ${YELLOW}$not_after${NC}"
-
-# 检查目标证书有效期
-echo -e "\n${GREEN}[检查目标证书有效期]${NC}"
-echo -e "证书到期时间: ${YELLOW}$not_after${NC}"
 echo -e "剩余天数: ${YELLOW}$remain_days 天${NC}"
 echo -e "${GREEN}证书有效期充足${NC}"
 
