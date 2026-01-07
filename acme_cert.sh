@@ -27,8 +27,8 @@ NC='\033[0m'          # 所有颜色后重置
 ACME_HOME="/root/.acme.sh"                            # acme.sh安装目录
 DEFAULT_TARGET_CERT="/root/cert.crt"                  # 目标证书路径
 DEFAULT_TARGET_KEY="/root/private.key"                # 目标私钥路径
-LOG_DIR="./acme-cert_logs"                            # 日志存储目录（适配新脚本名）
-LOG_FILE="${LOG_DIR}/acme-cert_$(date +%Y-%m-%d).log" # 按日期分割日志（适配新脚本名）
+LOG_DIR="./acme_cert_logs"                            # 日志存储目录
+LOG_FILE="${LOG_DIR}/acme_cert_$(date +%Y-%m-%d).log" # 按日期分割日志
 
 #######################################
 # 日志初始化函数（基础工具，优先定义）
