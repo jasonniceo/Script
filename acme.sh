@@ -24,25 +24,38 @@ DEFAULT_TARGET_KEY="/root/private.key"     # 目标私钥路径
 # 函数：删除acme.sh定时任务（全局定义，确保所有场景可调用）
 #######################################
 delete_acme_crontab() {
+    # 临时关闭“命令失败即终止”规则（仅函数内生效，不影响全局）
+    set +e
     echo -e "\n${YELLOW}🔍 正在自动删除acme.sh定时任务...${NC}"
-    # 临时文件存储过滤后的crontab内容
-    local tmp_crontab=$(mktemp)
-    # 导出当前crontab，过滤掉所有包含 "acme.sh --cron" 的行，保存到临时文件
-    crontab -l 2>/dev/null | grep -v "acme.sh --cron" > "$tmp_crontab"
-    # 统计被删除的任务数量
+    
+    # 安全临时文件：/tmp路径+时间戳+进程ID，避免冲突/权限问题
+    local tmp_crontab="/tmp/acme_crontab_$(date +%s)_$$.tmp"
+    > "$tmp_crontab"  # 提前创建空文件，避免写入失败
+    
+    # 容错执行：导出crontab并过滤，失败不终止
+    crontab -l 2>/dev/null | grep -v "acme.sh --cron" > "$tmp_crontab" || true
+    
+    # 统计任务数量（兼容空crontab场景）
     local original_count=$(crontab -l 2>/dev/null | wc -l)
     local new_count=$(wc -l < "$tmp_crontab")
     local deleted_count=$((original_count - new_count))
-
+    
+    # 降级处理：能执行则执行，失败仅警告
     if [ $deleted_count -gt 0 ]; then
-        # 重新加载过滤后的crontab
-        crontab "$tmp_crontab"
-        echo -e "${GREEN}✅ 成功删除 ${deleted_count} 个acme.sh定时任务${NC}"
+        if crontab "$tmp_crontab"; then
+            echo -e "${GREEN}✅ 成功删除 ${deleted_count} 个acme.sh定时任务${NC}"
+        else
+            echo -e "${YELLOW}⚠️ 定时任务删除失败（非核心步骤），不影响证书使用，可手动清理${NC}"
+        fi
     else
         echo -e "${BLUE}ℹ️  未检测到acme.sh定时任务，无需删除${NC}"
     fi
-    # 删除临时文件
+    
+    # 强制清理临时文件（无论成败）
     rm -f "$tmp_crontab"
+    
+    # 恢复全局的“命令失败即终止”规则
+    set -e
 }
 
 #######################################
@@ -128,6 +141,74 @@ while true; do
 done
 
 #######################################
+# 防火墙默认关闭
+#######################################
+echo "是否关闭防火墙?"
+echo "1. 是"
+echo "2. 否"
+read -p "$(echo -e ${YELLOW}"输入选项（1或2，直接回车选默认关闭）:"${NC})" FIREWALL_OPTION
+if [ -z "$FIREWALL_OPTION" ]; then
+    FIREWALL_OPTION=1
+fi
+
+#######################################
+# 检查系统类型并安装依赖
+#######################################
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS=$ID
+else
+    echo -e "${RED}❌ 无法识别操作系统，请手动安装依赖。${NC}"
+    exit 1
+fi
+
+echo -e "${YELLOW}🔧 开始安装依赖组件...${NC}"
+case $OS in
+    ubuntu|debian)
+        sudo apt update -y
+        sudo apt install -y curl socat git cron --no-install-recommends
+        # 新增：安装并启动cron服务
+        sudo systemctl enable --now cron
+        if [ "$FIREWALL_OPTION" -eq 1 ]; then
+            if command -v ufw >/dev/null 2>&1; then
+                sudo ufw disable
+                echo -e "${GREEN}✅ 防火墙已关闭${NC}"
+            else
+                echo -e "${YELLOW}⚠️ UFW 未安装，跳过关闭防火墙。${NC}"
+            fi
+        else
+            if command -v ufw >/dev/null 2>&1; then
+                sudo ufw allow 80/tcp
+                echo -e "${GREEN}✅ 已自动放行80端口${NC}"
+            else
+                echo -e "${YELLOW}⚠️ UFW 未安装，需手动确保80端口开放${NC}"
+            fi
+        fi
+        ;;
+    centos)
+        sudo yum update -y
+        sudo yum install -y curl socat git cronie
+        # 新增：启动并开机自启crond服务
+        sudo systemctl start crond
+        sudo systemctl enable crond
+        if [ "$FIREWALL_OPTION" -eq 1 ]; then
+            sudo systemctl stop firewalld
+            sudo systemctl disable firewalld
+            echo -e "${GREEN}✅ 防火墙已关闭${NC}"
+        else
+            sudo firewall-cmd --permanent --add-port=80/tcp
+            sudo firewall-cmd --reload
+            echo -e "${GREEN}✅ 已自动放行80端口${NC}"
+        fi
+        ;;
+    *)
+        echo -e "${RED}❌ 不支持的操作系统：$OS${NC}"
+        exit 1
+        ;;
+esac
+echo -e "${GREEN}✅ 依赖组件安装完成${NC}"
+
+#######################################
 # 安装 acme.sh 并启用自动升级
 #######################################
 echo -e "${YELLOW}📦 检查并安装 acme.sh...${NC}"
@@ -179,71 +260,6 @@ case $CA_OPTION in
     *) 
         echo -e "${RED}❌ 无效选项${NC}"; exit 1 ;;
 esac
-
-#######################################
-# 防火墙默认关闭
-#######################################
-echo "是否关闭防火墙?"
-echo "1. 是"
-echo "2. 否"
-read -p "$(echo -e ${YELLOW}"输入选项（1或2，直接回车选默认关闭）:"${NC})" FIREWALL_OPTION
-if [ -z "$FIREWALL_OPTION" ]; then
-    FIREWALL_OPTION=1
-fi
-
-#######################################
-# 检查系统类型并安装依赖
-#######################################
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    OS=$ID
-else
-    echo -e "${RED}❌ 无法识别操作系统，请手动安装依赖。${NC}"
-    exit 1
-fi
-
-echo -e "${YELLOW}🔧 开始安装依赖组件...${NC}"
-case $OS in
-    ubuntu|debian)
-        sudo apt update -y
-        sudo apt install -y curl socat git cron --no-install-recommends
-        if [ "$FIREWALL_OPTION" -eq 1 ]; then
-            if command -v ufw >/dev/null 2>&1; then
-                sudo ufw disable
-                echo -e "${GREEN}✅ 防火墙已关闭${NC}"
-            else
-                echo -e "${YELLOW}⚠️ UFW 未安装，跳过关闭防火墙。${NC}"
-            fi
-        else
-            if command -v ufw >/dev/null 2>&1; then
-                sudo ufw allow 80/tcp
-                echo -e "${GREEN}✅ 已自动放行80端口${NC}"
-            else
-                echo -e "${YELLOW}⚠️ UFW 未安装，需手动确保80端口开放${NC}"
-            fi
-        fi
-        ;;
-    centos)
-        sudo yum update -y
-        sudo yum install -y curl socat git cronie
-        sudo systemctl start crond
-        sudo systemctl enable crond
-        if [ "$FIREWALL_OPTION" -eq 1 ]; then
-            sudo systemctl stop firewalld
-            sudo systemctl disable firewalld
-            echo -e "${GREEN}✅ 防火墙已关闭${NC}"
-        else
-            sudo firewall-cmd --permanent --add-port=80/tcp
-            sudo firewall-cmd --reload
-            echo -e "${GREEN}✅ 已自动放行80端口${NC}"
-        fi
-        ;;
-    *)
-        echo -e "${RED}❌ 不支持的操作系统：$OS${NC}"
-        exit 1
-        ;;
-esac
-echo -e "${GREEN}✅ 依赖组件安装完成${NC}"
 
 #######################################
 # 注册账户（仅非Let's Encrypt执行）
