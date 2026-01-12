@@ -7,8 +7,8 @@
 # ==============================================================================
 
 set -eo pipefail  # 核心安全控制：
-                   # 1. 任意命令执行失败(返回非0)立即终止脚本；
-                   # 2. 管道命令中任意环节失败，整个管道视为失败，避免隐藏错误
+                  # 1. 任意命令执行失败(返回非0)立即终止脚本；
+                  # 2. 管道命令中任意环节失败，整个管道视为失败，避免隐藏错误
 
 # ==============================================================================
 # 【基础定义层】- 颜色定义/配置变量/参数设置（优先放置）
@@ -22,19 +22,19 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # 颜色定义（标准化终端输出）
 #######################################
 # 基础字体颜色（最常用）
-RED='\033[0;31m'     # 所有错误、失败、异常消息
-GREEN='\033[0;32m'   # 所有成功/完成/通过/主标题/菜单标题
-YELLOW='\033[1;33m'  # 所有警告/提示/待确认信息
-NC='\033[0m'         # 所有颜色后重置
+RED='\033[0;31m'      # 所有错误、失败、异常消息
+GREEN='\033[0;32m'    # 所有成功/完成/通过/主标题/菜单标题
+YELLOW='\033[1;33m'   # 所有警告/提示/待确认信息
+NC='\033[0m'          # 所有颜色后重置
 #######################################
 # 核心配置（集中管理关键路径）
 #######################################
-ACME_HOME="/root/.acme.sh"                          # acme.sh安装目录
-DEFAULT_TARGET_CERT="/root/cert.crt"                # 目标证书路径
-DEFAULT_TARGET_KEY="/root/private.key"              # 目标私钥路径
-LOG_DIR="./acme_cert_logs"                          # 日志存储目录
+ACME_HOME="/root/.acme.sh"                            # acme.sh安装目录
+DEFAULT_TARGET_CERT="/root/cert.crt"                  # 目标证书路径
+DEFAULT_TARGET_KEY="/root/private.key"                # 目标私钥路径
+LOG_DIR="./acme_cert_logs"                            # 日志存储目录
 LOG_FILE="${LOG_DIR}/acme_cert_$(date +%Y-%m-%d).log" # 按日期分割日志
-mkdir -p "$LOG_DIR"                                 # 确保日志目录存在
+mkdir -p "$LOG_DIR"                                   # 确保日志目录存在
 
 #######################################
 # 日志初始化函数（基础工具，优先定义）
@@ -520,7 +520,7 @@ main() {
     log "INFO" "拷贝证书到root目录"
     # 关键：添加 > /dev/null 2>&1 屏蔽acme.sh原始英文日志
     ~/.acme.sh/acme.sh --installcert -d $DOMAIN \
-        --key-file        $DEFAULT_TARGET_KEY \
+        --key-file       $DEFAULT_TARGET_KEY \
         --fullchain-file $DEFAULT_TARGET_CERT > /dev/null 2>&1
 
     # 手动输出对应的中文日志（替换原来的英文日志，保持逻辑一致）
@@ -623,50 +623,6 @@ echo -e "  私钥状态: $key_status"
 }
 
 # ==============================================================================
-# 【自动部署层】- 远程下载后自动固化脚本 + 配置快捷键（新增，不影响原有结构）
-# 功能：第一次运行脚本时，自动将脚本拷贝到全局可执行目录，配置快捷键a，永久生效
-# 位置：放在主执行函数层之后，脚本执行入口之前
+# 【脚本执行入口】- 最后一行调用main函数
 # ==============================================================================
-auto_deploy() {
-    # 定义全局脚本路径（确保任意目录可调用）
-    local GLOBAL_SCRIPT_PATH="/usr/local/bin/acme_cert.sh"
-    local SHORTCUT_CMD="alias a='$GLOBAL_SCRIPT_PATH'"
-    local BASHRC_FILE="$HOME/.bashrc"
-    local CURRENT_SCRIPT_PATH=$(readlink -f "$0")
-
-    # 1. 检查是否已部署：如果全局脚本存在且和当前脚本一致，跳过部署
-    if [ -f "$GLOBAL_SCRIPT_PATH" ] && [ "$(md5sum "$CURRENT_SCRIPT_PATH" | awk '{print $1}')" = "$(md5sum "$GLOBAL_SCRIPT_PATH" | awk '{print $1}')" ]; then
-        return 0
-    fi
-
-    # 2. 拷贝脚本到全局目录，赋予执行权限（固化脚本，防止原文件被删除）
-    echo -e "${YELLOW}[自动部署] 正在将脚本固化到全局目录...${NC}"
-    if ! sudo cp -f "$CURRENT_SCRIPT_PATH" "$GLOBAL_SCRIPT_PATH"; then
-        echo -e "${RED}[自动部署] 无sudo权限，部署失败！请手动执行：sudo cp $CURRENT_SCRIPT_PATH $GLOBAL_SCRIPT_PATH${NC}"
-        return 1
-    fi
-    sudo chmod +x "$GLOBAL_SCRIPT_PATH"
-    echo -e "${GREEN}[自动部署] 脚本已固化到：$GLOBAL_SCRIPT_PATH${NC}"
-
-    # 3. 配置快捷键a到.bashrc，永久生效（先删除旧别名，避免重复）
-    echo -e "${YELLOW}[自动部署] 正在配置快捷键 'a'...${NC}"
-    sed -i "/alias a='.*acme_cert.sh'/d" "$BASHRC_FILE" 2>/dev/null
-    echo -e "\n# ACME Script Global Shortcut (Auto-Deployed)" >> "$BASHRC_FILE"
-    echo "$SHORTCUT_CMD" >> "$BASHRC_FILE"
-
-    # 4. 立即加载.bashrc，使快捷键在当前shell中生效（无需重启终端）
-    source "$BASHRC_FILE" >/dev/null 2>&1
-    alias a="$GLOBAL_SCRIPT_PATH" >/dev/null 2>&1
-    echo -e "${GREEN}[自动部署] 快捷键配置完成！${NC}"
-    echo -e "${GREEN}[自动部署] 现在输入 'a' 即可永久运行脚本！${NC}\n"
-
-    # 5. 优化：不再使用exec替换进程，确保部署后能继续执行main函数
-    return 0
-}
-
-# ==============================================================================
-# 【脚本执行入口】- 核心修复！先执行自动部署，再执行主函数（必执行）
-# 原错误：auto_deploy && main → 修复后：auto_deploy; main
-# 解释：; 表示无论前面的命令是否成功，后面的命令都会执行，确保部署后一定进入主逻辑
-# ==============================================================================
-auto_deploy; main
+main
