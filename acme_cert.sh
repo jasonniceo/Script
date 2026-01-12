@@ -3,72 +3,12 @@
 # ACME证书申请脚本
 # 核心功能：一键申请/重置SSL证书，支持多CA机构、80端口检查、环境清理
 # 安全控制：命令失败即终止 + 管道失败即终止，避免隐藏错误
-# 使用方法：远程下载后直接输入 a 运行
+# 使用方法：手动执行 ./acme_cert.sh或输入 a 运行
 # ==============================================================================
 
 set -eo pipefail  # 核心安全控制：
                    # 1. 任意命令执行失败(返回非0)立即终止脚本；
                    # 2. 管道命令中任意环节失败，整个管道视为失败，避免隐藏错误
-
-# ==============================================================================
-# 【前置部署层】- 优先级最高！脚本被调用时，先执行此函数，实现下载后直接用a调用
-# 功能：1. 自动固化脚本到全局目录 2. 自动配置永久别名a 3. 立即加载别名 4. 部署完成后执行主逻辑
-# 注意：此函数必须是脚本中第一个被执行的函数，确保部署优先于所有逻辑
-# ==============================================================================
-pre_deploy() {
-    # 定义全局脚本路径（确保任意目录可调用，无sudo权限可改为~/.local/bin）
-    local GLOBAL_SCRIPT_PATH="/usr/local/bin/acme_cert.sh"
-    local SHORTCUT_CMD="alias a='$GLOBAL_SCRIPT_PATH'"
-    local BASHRC_FILE="$HOME/.bashrc"
-    local CURRENT_SCRIPT_PATH=$(readlink -f "$0")
-
-    # 1. 检查是否已完成永久部署：全局脚本存在 + 别名已写入bashrc，直接执行主逻辑
-    if [ -f "$GLOBAL_SCRIPT_PATH" ] && grep -Fq "$SHORTCUT_CMD" "$BASHRC_FILE" 2>/dev/null; then
-        # 确保全局脚本是最新的，同步当前脚本的内容（解决下载后脚本可能被修改的问题）
-        if [ "$(md5sum "$CURRENT_SCRIPT_PATH" | awk '{print $1}')" != "$(md5sum "$GLOBAL_SCRIPT_PATH" | awk '{print $1}')" ]; then
-            sudo cp -f "$CURRENT_SCRIPT_PATH" "$GLOBAL_SCRIPT_PATH"
-            sudo chmod +x "$GLOBAL_SCRIPT_PATH"
-        fi
-        main
-        exit 0
-    fi
-
-    # 2. 未部署：开始自动部署（全程无交互，自动完成）
-    echo -e "\033[1;33m[前置部署] 检测到脚本未部署，正在自动完成部署...\033[0m"
-
-    # 2.1 拷贝脚本到全局目录，赋予执行权限（自动处理sudo权限）
-    if ! sudo cp -f "$CURRENT_SCRIPT_PATH" "$GLOBAL_SCRIPT_PATH"; then
-        echo -e "\033[0;31m[前置部署] 无sudo权限，尝试部署到用户目录...\033[0m"
-        mkdir -p "$HOME/.local/bin"
-        GLOBAL_SCRIPT_PATH="$HOME/.local/bin/acme_cert.sh"
-        SHORTCUT_CMD="alias a='$GLOBAL_SCRIPT_PATH'"
-        cp -f "$CURRENT_SCRIPT_PATH" "$GLOBAL_SCRIPT_PATH"
-        # 将用户目录加入PATH（永久生效）
-        if ! grep -Fq "export PATH=\"\$HOME/.local/bin:\$PATH\"" "$BASHRC_FILE" 2>/dev/null; then
-            echo -e "\n# Add user local bin to PATH" >> "$BASHRC_FILE"
-            echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$BASHRC_FILE"
-        fi
-    fi
-    chmod +x "$GLOBAL_SCRIPT_PATH"
-
-    # 2.2 写入永久别名到bashrc（覆盖原有别名，确保唯一）
-    sed -i "/alias a='.*acme_cert.sh'/d" "$BASHRC_FILE" 2>/dev/null
-    echo -e "\n# ACME Script Permanent Shortcut (Auto-Deployed)" >> "$BASHRC_FILE"
-    echo "$SHORTCUT_CMD" >> "$BASHRC_FILE"
-
-    # 2.3 立即加载别名，实现「部署完成后，当前shell中直接输a即可用」
-    source "$BASHRC_FILE" >/dev/null 2>&1
-    alias a="$GLOBAL_SCRIPT_PATH" >/dev/null 2>&1
-
-    # 2.4 部署完成提示
-    echo -e "\033[0;32m[前置部署] 部署完成！\033[0m"
-    echo -e "\033[0;32m[前置部署] 脚本路径：$GLOBAL_SCRIPT_PATH\033[0m"
-    echo -e "\033[0;32m[前置部署] 现在输入 'a' 即可运行脚本，永久生效！\033[0m"
-
-    # 2.5 部署完成后，执行主逻辑（第一次部署时，直接进入脚本功能）
-    main
-    exit 0
-}
 
 # ==============================================================================
 # 【基础定义层】- 颜色定义/配置变量/参数设置（优先放置）
@@ -140,7 +80,7 @@ log() {
 # ==============================================================================
 #######################################
 # 函数：自动配置快捷键（新增功能）
-# 功能：设置 'a' 为脚本别名，方便后续直接运行（兼容原有逻辑，双重保障）
+# 功能：设置 'a' 为脚本别名，方便后续直接运行
 #######################################
 setup_shortcut() {
     # 动态获取当前脚本的绝对路径，无论文件名是什么都能准确获取
@@ -440,7 +380,7 @@ main() {
     # 初始化日志（脚本启动第一步）
     init_log
 
-    # 核心功能：自动配置快捷启动键（新增，双重保障）
+    # 核心功能：自动配置快捷启动键（新增）
     setup_shortcut
 
     #######################################
@@ -683,6 +623,50 @@ echo -e "  私钥状态: $key_status"
 }
 
 # ==============================================================================
-# 【脚本执行入口】- 优先级最高！先执行前置部署，再执行主逻辑（唯一入口）
+# 【自动部署层】- 远程下载后自动固化脚本 + 配置快捷键（新增，不影响原有结构）
+# 功能：第一次运行脚本时，自动将脚本拷贝到全局可执行目录，配置快捷键a，永久生效
+# 位置：放在主执行函数层之后，脚本执行入口之前
 # ==============================================================================
-pre_deploy
+auto_deploy() {
+    # 定义全局脚本路径（确保任意目录可调用）
+    local GLOBAL_SCRIPT_PATH="/usr/local/bin/acme_cert.sh"
+    local SHORTCUT_CMD="alias a='$GLOBAL_SCRIPT_PATH'"
+    local BASHRC_FILE="$HOME/.bashrc"
+    local CURRENT_SCRIPT_PATH=$(readlink -f "$0")
+
+    # 1. 检查是否已部署：如果全局脚本存在且和当前脚本一致，跳过部署
+    if [ -f "$GLOBAL_SCRIPT_PATH" ] && [ "$(md5sum "$CURRENT_SCRIPT_PATH" | awk '{print $1}')" = "$(md5sum "$GLOBAL_SCRIPT_PATH" | awk '{print $1}')" ]; then
+        return 0
+    fi
+
+    # 2. 拷贝脚本到全局目录，赋予执行权限（固化脚本，防止原文件被删除）
+    echo -e "${YELLOW}[自动部署] 正在将脚本固化到全局目录...${NC}"
+    if ! sudo cp -f "$CURRENT_SCRIPT_PATH" "$GLOBAL_SCRIPT_PATH"; then
+        echo -e "${RED}[自动部署] 无sudo权限，部署失败！请手动执行：sudo cp $CURRENT_SCRIPT_PATH $GLOBAL_SCRIPT_PATH${NC}"
+        return 1
+    fi
+    sudo chmod +x "$GLOBAL_SCRIPT_PATH"
+    echo -e "${GREEN}[自动部署] 脚本已固化到：$GLOBAL_SCRIPT_PATH${NC}"
+
+    # 3. 配置快捷键a到.bashrc，永久生效（先删除旧别名，避免重复）
+    echo -e "${YELLOW}[自动部署] 正在配置快捷键 'a'...${NC}"
+    sed -i "/alias a='.*acme_cert.sh'/d" "$BASHRC_FILE" 2>/dev/null
+    echo -e "\n# ACME Script Global Shortcut (Auto-Deployed)" >> "$BASHRC_FILE"
+    echo "$SHORTCUT_CMD" >> "$BASHRC_FILE"
+
+    # 4. 立即加载.bashrc，使快捷键在当前shell中生效（无需重启终端）
+    source "$BASHRC_FILE" >/dev/null 2>&1
+    alias a="$GLOBAL_SCRIPT_PATH" >/dev/null 2>&1
+    echo -e "${GREEN}[自动部署] 快捷键配置完成！${NC}"
+    echo -e "${GREEN}[自动部署] 现在输入 'a' 即可永久运行脚本！${NC}\n"
+
+    # 5. 优化：不再使用exec替换进程，确保部署后能继续执行main函数
+    return 0
+}
+
+# ==============================================================================
+# 【脚本执行入口】- 核心修复！先执行自动部署，再执行主函数（必执行）
+# 原错误：auto_deploy && main → 修复后：auto_deploy; main
+# 解释：; 表示无论前面的命令是否成功，后面的命令都会执行，确保部署后一定进入主逻辑
+# ==============================================================================
+auto_deploy; main
