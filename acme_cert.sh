@@ -3,7 +3,7 @@
 # ACME证书申请脚本
 # 核心功能：一键申请/重置SSL证书，支持多CA机构、80端口检查、环境清理
 # 安全控制：命令失败即终止 + 管道失败即终止，避免隐藏错误
-# 使用方法：手动执行 ./acme-cert.sh
+# 使用方法：手动执行 ./acme_cert.sh
 # ==============================================================================
 
 set -eo pipefail  # 核心安全控制：
@@ -13,6 +13,11 @@ set -eo pipefail  # 核心安全控制：
 # ==============================================================================
 # 【基础定义层】- 颜色定义/配置变量/参数设置（优先放置）
 # ==============================================================================
+# 【优化】强制设定英文环境，防止OpenSSL和Date命令因系统语言不同导致解析错误
+export LANG=en_US.UTF-8
+# 【优化】补全系统路径，防止部分极简系统找不到系统命令
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 #######################################
 # 颜色定义（标准化终端输出）
 #######################################
@@ -42,7 +47,7 @@ init_log() {
         chmod 755 "${LOG_DIR}"  # 安全权限：仅当前用户可写
     fi
     # 写入日志头（标记脚本启动，适配新脚本名）
-    echo -e "\n[$(date '+%Y-%m-%d %H:%M:%S')] ===== acme-cert.sh 脚本启动 =====" >> "${LOG_FILE}"
+    echo -e "\n[$(date '+%Y-%m-%d %H:%M:%S')] ===== acme_cert.sh 脚本启动 =====" >> "${LOG_FILE}"
 }
 
 #######################################
@@ -73,6 +78,31 @@ log() {
 # ==============================================================================
 # 【功能函数层】- 按main主流程调用顺序排列
 # ==============================================================================
+#######################################
+# 函数：自动配置快捷键（新增功能）
+# 功能：设置 'a' 为脚本别名，方便后续直接运行
+#######################################
+setup_shortcut() {
+    # 动态获取当前脚本的绝对路径，无论文件名是什么都能准确获取
+    local script_path=$(readlink -f "$0")
+    local shortcut_cmd="alias a='$script_path'"
+    local bashrc_file="$HOME/.bashrc"
+
+    # 赋予脚本执行权限（防止下载后无权限）
+    chmod +x "$script_path"
+
+    # 检查是否已配置，未配置则写入 .bashrc
+    if ! grep -Fq "$shortcut_cmd" "$bashrc_file" 2>/dev/null; then
+        log "INFO" "检测到未配置快捷键，正在设置..."
+        echo "" >> "$bashrc_file"
+        echo "# ACME Script Shortcut" >> "$bashrc_file"
+        echo "$shortcut_cmd" >> "$bashrc_file"
+        # 尝试在当前shell中立即生效别名（尽力而为，通常新窗口必生效）
+        alias a="$script_path"
+        log "SUCCESS" "快捷键 'a' 设置成功！(下次输入 a 即可运行)"
+    fi
+}
+
 #######################################
 # 函数：检查并安装Git（main流程第一步调用）
 # 功能：兼容Debian/Ubuntu/CentOS系统，自动安装Git依赖
@@ -164,7 +194,8 @@ reset_acme_env() {
     log "SUCCESS" "已清空 acme.sh 相关临时文件，准备重新部署。"
     log "INFO" "正在重新执行 acme.sh 官方安装脚本..."
     sleep 1
-    curl https://get.acme.sh | sh
+    # 【优化】增加连接超时限制，防止脚本无限卡死
+    curl --connect-timeout 5 https://get.acme.sh | sh
     ~/.acme.sh/acme.sh --upgrade --auto-upgrade
     log "SUCCESS" "acme.sh 环境重置完成"
     exit 0
@@ -187,10 +218,11 @@ install_system_deps() {
         exit 1
     fi
 
+    # 【优化】在依赖列表中增加openssl，确保后续证书解析正常
     case $OS in
         ubuntu|debian)
             sudo apt update -y
-            sudo apt install -y curl socat git cron --no-install-recommends
+            sudo apt install -y curl socat git cron openssl --no-install-recommends
             # 新增：安装并启动cron服务
             sudo systemctl enable --now cron
             if [ "$FIREWALL_OPTION" -eq 1 ]; then
@@ -211,7 +243,7 @@ install_system_deps() {
             ;;
         centos)
             sudo yum update -y
-            sudo yum install -y curl socat git cronie
+            sudo yum install -y curl socat git cronie openssl
             # 新增：启动并开机自启crond服务
             sudo systemctl start crond
             sudo systemctl enable crond
@@ -240,7 +272,8 @@ install_system_deps() {
 install_acme_sh() {
     log "INFO" "检查并安装 acme.sh..."
     if ! command -v acme.sh >/dev/null 2>&1; then
-        curl https://get.acme.sh | sh
+        # 【优化】增加连接超时限制
+        curl --connect-timeout 5 https://get.acme.sh | sh
         export PATH="$HOME/.acme.sh:$PATH"
         ~/.acme.sh/acme.sh --upgrade --auto-upgrade
     else
@@ -322,6 +355,9 @@ get_formatted_file_size() {
 main() {
     # 初始化日志（脚本启动第一步）
     init_log
+
+    # 核心功能：自动配置快捷启动键（新增）
+    setup_shortcut
 
     #######################################
     # 检查并安装 git
@@ -553,7 +589,7 @@ echo -e "  私钥状态: $key_status"
     
     # 写入日志尾（标记脚本结束，适配新脚本名）
     log "SUCCESS" "脚本执行完成"
-    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ===== acme-cert.sh 脚本结束 =====" >> "${LOG_FILE}"
+    echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] ===== acme_cert.sh 脚本结束 =====" >> "${LOG_FILE}"
 }
 
 # ==============================================================================
