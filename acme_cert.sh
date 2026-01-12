@@ -346,6 +346,30 @@ get_formatted_file_size() {
     fi
 }
 
+#######################################
+# 函数：更新脚本（main流程菜单3调用）
+# 功能：更新当前脚本文件（需配置URL）
+#######################################
+update_script() {
+    log "INFO" "正在检查脚本更新..."
+    
+    # 【配置】请在此处填入最新版脚本的下载链接 (例如 GitHub raw 链接)
+    local UPDATE_URL=""
+    
+    if [ -z "$UPDATE_URL" ]; then
+        log "WARN" "更新源未配置，请编辑脚本中的 update_script 函数填入 URL。"
+        return
+    fi
+    
+    if curl -L --connect-timeout 10 -o "$0" "$UPDATE_URL"; then
+        chmod +x "$0"
+        log "SUCCESS" "脚本更新成功，请重新运行！"
+        exit 0
+    else
+        log "ERROR" "更新下载失败，请检查网络或 URL 配置。"
+    fi
+}
+
 # ==============================================================================
 # 【主执行函数层】- main函数（所有流程的调度中心）
 # ==============================================================================
@@ -370,13 +394,14 @@ main() {
     while true; do
         clear
         echo -e "${GREEN}===========================================${NC}"
-        echo -e "${GREEN}           SSL证书管理菜单${NC}"
+        echo -e "${GREEN}            SSL证书管理菜单${NC}"
         echo -e "${GREEN}===========================================${NC}"
         echo "1. 申请 SSL 证书"
         echo "2. 重置环境（清除申请记录并重新部署）"
-        echo "3. 退出"
+        echo "3. 更新脚本"
+        echo "4. 退出"
         echo -e "${GREEN}===========================================${NC}"
-        read -p "$(echo -e ${YELLOW}"请输入选项（1-3）: "${NC})" MAIN_OPTION
+        read -p "$(echo -e ${YELLOW}"请输入选项（1-4）: "${NC})" MAIN_OPTION
 
         case $MAIN_OPTION in
             1)
@@ -386,6 +411,9 @@ main() {
                 reset_acme_env
                 ;;
             3)
+                update_script
+                ;;
+            4)
                 log "INFO" "已退出。"
                 exit 0
                 ;;
