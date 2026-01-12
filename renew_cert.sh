@@ -1,3 +1,5 @@
+我有一个Shell/bash脚本（代码如下），在不修改任何代码的功能、注释、格式、排版和风格的情况下，新增一个功能，就是我从远程下载到本地后，我想按b直接运行这个脚本
+
 #!/bin/bash
 # 证书自动续期管理脚本
 # 功能：自动检查证书有效期，在到期前30天自动续期，并重启面板服务和Nginx
@@ -83,7 +85,6 @@ show_interactive_menu() {
     echo -e "3. 仅检查证书状态（不执行续期）"
     echo -e "4. 更新脚本"
     echo -e "5. 退出"
-    # 已移除显示的选项 'b'，但下方 case 中依然保留处理逻辑
     echo -en "${YELLOW}请选择运行模式（默认1，直接回车使用自动模式）: ${NC}"
     
     read -r choice
@@ -109,20 +110,6 @@ show_interactive_menu() {
         5)
             echo -e "${GREEN}已退出脚本${NC}"
             echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 用户选择退出" >> "$LOG_FILE"
-            exit 0
-            ;;
-        b)
-            echo -e "\n${GREEN}[安装快捷指令]${NC}"
-            # 将当前脚本复制到 /usr/bin/b 并赋予权限
-            if cp -f "$0" /usr/bin/b; then
-                chmod +x /usr/bin/b
-                echo -e "${GREEN}快捷指令安装成功！${NC}"
-                echo -e "您现在可以在终端任意位置输入 ${YELLOW}b${NC} 来直接运行此脚本。"
-                echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 用户安装快捷指令 'b' 成功" >> "$LOG_FILE"
-            else
-                echo -e "${RED}快捷指令安装失败，请检查权限${NC}"
-                echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 用户安装快捷指令 'b' 失败" >> "$LOG_FILE"
-            fi
             exit 0
             ;;
         *)
