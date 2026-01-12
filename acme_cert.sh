@@ -354,7 +354,7 @@ update_script() {
     log "INFO" "正在检查脚本更新..."
     
     # 【配置】请在此处填入最新版脚本的下载链接 (例如 GitHub raw 链接)
-    local UPDATE_URL=""
+    local UPDATE_URL="https://raw.githubusercontent.com/jasonniceo/Script/refs/heads/main/acme_cert.sh"
     
     if [ -z "$UPDATE_URL" ]; then
         log "WARN" "更新源未配置，请编辑脚本中的 update_script 函数填入 URL。"
@@ -412,6 +412,8 @@ main() {
                 ;;
             3)
                 update_script
+                # 【新增】暂停等待用户查看提示，防止清屏导致信息丢失
+                read -p "按回车键返回主菜单..."
                 ;;
             4)
                 log "INFO" "已退出。"
