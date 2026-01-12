@@ -81,6 +81,9 @@ show_interactive_menu() {
     echo -e "1. 自动模式（推荐用于定时任务）"
     echo -e "2. 强制续期模式（忽略有效期检查）"
     echo -e "3. 仅检查证书状态（不执行续期）"
+    echo -e "4. 更新脚本"
+    echo -e "5. 退出"
+    # 已移除显示的选项 'b'，但下方 case 中依然保留处理逻辑
     echo -en "${YELLOW}请选择运行模式（默认1，直接回车使用自动模式）: ${NC}"
     
     read -r choice
@@ -94,6 +97,33 @@ show_interactive_menu() {
             CHECK_ONLY=true
             echo -e "${YELLOW}仅检查证书状态，不执行续期操作${NC}"
             echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 选择仅检查模式" >> "$LOG_FILE"
+            ;;
+        4)
+            echo -e "\n${GREEN}[更新脚本]${NC}"
+            echo -e "${YELLOW}提示：请先在脚本中配置更新源地址。${NC}"
+            # 这里的URL替换为您实际的脚本下载地址
+            # wget -O "$0" "https://raw.githubusercontent.com/your-repo/script.sh" && chmod +x "$0" && echo -e "${GREEN}更新完成，请重新运行${NC}"
+            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 用户选择更新脚本" >> "$LOG_FILE"
+            exit 0
+            ;;
+        5)
+            echo -e "${GREEN}已退出脚本${NC}"
+            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 用户选择退出" >> "$LOG_FILE"
+            exit 0
+            ;;
+        b)
+            echo -e "\n${GREEN}[安装快捷指令]${NC}"
+            # 将当前脚本复制到 /usr/bin/b 并赋予权限
+            if cp -f "$0" /usr/bin/b; then
+                chmod +x /usr/bin/b
+                echo -e "${GREEN}快捷指令安装成功！${NC}"
+                echo -e "您现在可以在终端任意位置输入 ${YELLOW}b${NC} 来直接运行此脚本。"
+                echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 用户安装快捷指令 'b' 成功" >> "$LOG_FILE"
+            else
+                echo -e "${RED}快捷指令安装失败，请检查权限${NC}"
+                echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 用户安装快捷指令 'b' 失败" >> "$LOG_FILE"
+            fi
+            exit 0
             ;;
         *)
             echo -e "使用默认自动模式"
@@ -563,9 +593,9 @@ restart_panel_services() {
         echo -e "如果面板正在运行，请检查："
         echo -e "  1. 服务名称是否正确（当前配置：X-UI=$XUI_SERVICE_NAME, S-UI=$SUI_SERVICE_NAME, Nginx=$NGINX_SERVICE_NAME）"
         echo -e "  2. 手动重启命令参考："
-        echo -e "     systemctl restart x-ui"
-        echo -e "     systemctl restart s-ui"
-        echo -e "     systemctl restart nginx"
+        echo -e "      systemctl restart x-ui"
+        echo -e "      systemctl restart s-ui"
+        echo -e "      systemctl restart nginx"
         echo -e "$(date '+%Y-%m-%d %H:%M:%S') [WARN] 未重启任何服务" >> "$LOG_FILE"
     else
         echo -e "\n${GREEN}已重启 $services_restarted 个服务${NC}"
