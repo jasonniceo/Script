@@ -101,7 +101,7 @@ show_interactive_menu() {
             echo -e "\n${GREEN}[更新脚本]${NC}"
             echo -e "${YELLOW}提示：请先在脚本中配置更新源地址。${NC}"
             # 这里的URL替换为您实际的脚本下载地址
-            # wget -O "$0" "https://raw.githubusercontent.com/your-repo/script.sh" && chmod +x "$0" && echo -e "${GREEN}更新完成，请重新运行${NC}"
+            wget -O "$0" "https://raw.githubusercontent.com/jasonniceo/Script/refs/heads/main/renew_cert.sh" && chmod +x "$0" && echo -e "${GREEN}更新完成，请重新运行${NC}"
             echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 用户选择更新脚本" >> "$LOG_FILE"
             exit 0
             ;;
