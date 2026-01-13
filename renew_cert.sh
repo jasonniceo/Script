@@ -3,7 +3,7 @@
 # 功能：自动检查证书有效期，在到期前30天自动续期，并重启面板服务和Nginx
 # 作者：自动生成脚本
 # 版本：v2.1
-# 使用方法：可配置cron定时任务，或手动执行 ./renew_cert.sh
+# 使用方法：可配置cron定时任务，或手动执行 ./renew_cert.sh (或输入 b 运行)
 # 排序规则：基础定义层 → 功能函数（按main调用顺序）→ main主函数 → 执行入口
 # 日志说明：关键操作输出终端，核心流程自动记录时间戳，便于问题排查
 
@@ -54,6 +54,32 @@ LOG_FILE="${LOG_DIR}/renew_cert_$(date +%Y-%m-%d).log" # 按日期分割日志
 mkdir -p "$LOG_DIR"                         # 确保日志目录存在
 
 #######################################
+# 【功能函数】自动配置快捷键（新增功能，main流程最先调用）
+# 功能：设置 'b' 为全局命令
+#######################################
+setup_shortcut() {
+    # 动态获取当前脚本的绝对路径
+    local script_path=$(readlink -f "$0")
+    local link_path="/usr/bin/b"
+
+    # 赋予脚本执行权限
+    chmod +x "$script_path"
+
+    # 使用软链接，确保全局生效
+    if [ ! -e "$link_path" ]; then
+        # 强制创建软链接指向当前脚本
+        ln -sf "$script_path" "$link_path"
+        
+        if [ -x "$link_path" ]; then
+            echo -e "${GREEN}快捷键 'b' 设置成功！(可以直接输入 b 运行)${NC}"
+            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 快捷键 'b' 设置成功" >> "$LOG_FILE"
+        else
+            echo -e "${YELLOW}快捷键设置失败，请检查权限。${NC}"
+        fi
+    fi
+}
+
+#######################################
 # 【功能函数】按main调用顺序排列 - 1. 显示脚本头部信息
 #######################################
 show_header() {
@@ -99,8 +125,8 @@ show_interactive_menu() {
             ;;
         4)
             echo -e "\n${GREEN}[更新脚本]${NC}"
-            echo -e "${YELLOW}提示：请先在脚本中配置更新源地址。${NC}"
-            # 这里的URL替换为您实际的脚本下载地址
+            echo -e "${YELLOW}提示：正在从远程服务器获取最新版本...${NC}"
+            # 【修改】URL替换为您指定的renew_cert.sh地址
             wget -O "$0" "https://raw.githubusercontent.com/jasonniceo/Script/refs/heads/main/renew_cert.sh" && chmod +x "$0" && echo -e "${GREEN}更新完成，请重新运行${NC}"
             echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 用户选择更新脚本" >> "$LOG_FILE"
             exit 0
@@ -592,6 +618,9 @@ restart_panel_services() {
 # 【主执行函数】main函数（核心逻辑，按流程调用上述函数）
 #######################################
 main() {
+    # 核心功能：自动配置快捷启动键 'b'（新增）
+    setup_shortcut
+
     # 前置检查：确保openssl已安装
     if ! command -v openssl &>/dev/null; then
         echo -e "${RED}错误：系统未安装openssl，脚本无法正常运行${NC}"
