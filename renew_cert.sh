@@ -84,13 +84,16 @@ setup_shortcut() {
 #######################################
 show_header() {
     # 输出脚本启动信息，同时写入日志
+    # 修改说明：IPv4 改为使用 curl 获取公网IP，如果获取失败则回退到内网IP
+    local public_ipv4=$(curl -s4m 2 https://ip.sb || curl -s4m 2 https://ifconfig.me || hostname -I | awk '{print $1}')
+    
     local header_info="===================================================
             证书管理脚本启动
 ===================================================
 当前时间: $(date '+%Y-%m-%d %H:%M:%S')
 主机名: $(hostname)
-IPv4地址: $(hostname -I 2>/dev/null | awk '{print $1}' || echo '未知')
-IPv6地址: $(hostname -I 2>/dev/null | awk '{print $2}' || curl -s ifconfig.me 2>/dev/null || echo '未知')"
+IPv4地址: ${public_ipv4:-未知}
+IPv6地址: $(hostname -I 2>/dev/null | awk '{print $2}' || curl -s6m 2 ifconfig.me 2>/dev/null || echo '未知')"
     
     # 终端彩色输出
     echo -e "${GREEN}${header_info}${NC}"
