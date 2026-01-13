@@ -80,26 +80,27 @@ log() {
 # ==============================================================================
 #######################################
 # 函数：自动配置快捷键（新增功能）
-# 功能：设置 'a' 为脚本别名，方便后续直接运行
+# 功能：设置 'a' 为全局命令，方便后续直接运行
 #######################################
 setup_shortcut() {
     # 动态获取当前脚本的绝对路径，无论文件名是什么都能准确获取
     local script_path=$(readlink -f "$0")
-    local shortcut_cmd="alias a='$script_path'"
-    local bashrc_file="$HOME/.bashrc"
+    local link_path="/usr/bin/a"
 
     # 赋予脚本执行权限（防止下载后无权限）
     chmod +x "$script_path"
 
-    # 检查是否已配置，未配置则写入 .bashrc
-    if ! grep -Fq "$shortcut_cmd" "$bashrc_file" 2>/dev/null; then
+    # 使用软链接代替 alias，确保在当前 Shell 和新 Shell 中立即生效
+    if [ ! -e "$link_path" ]; then
         log "INFO" "检测到未配置快捷键，正在设置..."
-        echo "" >> "$bashrc_file"
-        echo "# ACME Script Shortcut" >> "$bashrc_file"
-        echo "$shortcut_cmd" >> "$bashrc_file"
-        # 尝试在当前shell中立即生效别名（尽力而为，通常新窗口必生效）
-        alias a="$script_path"
-        log "SUCCESS" "快捷键 'a' 设置成功！(下次输入 a 即可运行)"
+        # 强制创建软链接指向当前脚本
+        ln -sf "$script_path" "$link_path"
+        
+        if [ -x "$link_path" ]; then
+            log "SUCCESS" "快捷键 'a' 设置成功！(可以直接输入 a 运行)"
+        else
+            log "WARN" "快捷键设置失败，请检查权限。"
+        fi
     fi
 }
 
