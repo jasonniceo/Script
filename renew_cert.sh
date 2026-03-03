@@ -2,7 +2,7 @@
 # 证书自动续期管理脚本
 # 功能：自动检查证书有效期，在到期前30天自动续期，并重启面板服务和Nginx
 # 作者：自动生成脚本
-# 版本：v2.1
+# 版本：v2.1 (已优化：日志自动去除颜色码)
 # 使用方法：可配置cron定时任务，或手动执行 ./renew_cert.sh (或输入 b 运行)
 # 排序规则：基础定义层 → 功能函数（按main调用顺序）→ main主函数 → 执行入口
 # 日志说明：关键操作输出终端，核心流程自动记录时间戳，便于问题排查
@@ -54,6 +54,18 @@ LOG_FILE="${LOG_DIR}/renew_cert_$(date +%Y-%m-%d).log" # 按日期分割日志
 mkdir -p "$LOG_DIR"                        # 确保日志目录存在
 
 #######################################
+# 【新增】辅助函数：写日志（自动过滤颜色码）
+# 功能：终端保留彩色输出，写入日志文件时自动去除乱码
+#######################################
+write_log() {
+    local log_content="$1"
+    # 1. 同时输出到终端（带颜色）
+    echo -e "$log_content"
+    # 2. 去除颜色码后写入日志文件（使用sed过滤ANSI转义序列）
+    echo -e "$log_content" | sed -r "s/\x1B\[[0-9;]*[mG]//g" >> "$LOG_FILE"
+}
+
+#######################################
 # 【功能函数】自动配置快捷键（新增功能，main流程最先调用）
 # 功能：设置 'b' 为全局命令
 #######################################
@@ -72,7 +84,7 @@ setup_shortcut() {
         
         if [ -x "$link_path" ]; then
             echo -e "${GREEN}快捷键 'b' 设置成功！(可以直接输入 b 运行)${NC}"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 快捷键 'b' 设置成功" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 快捷键 'b' 设置成功" >> "$LOG_FILE"
         else
             echo -e "${YELLOW}快捷键设置失败，请检查权限。${NC}"
         fi
@@ -98,7 +110,8 @@ IPv6地址: $(hostname -I 2>/dev/null | awk '{print $2}' || curl -s6m 2 ifconfig
     # 终端彩色输出
     echo -e "${GREEN}${header_info}${NC}"
     # 写入日志（去除颜色符）
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 脚本启动\n${header_info}" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 脚本启动
+${header_info}" | sed -r "s/\x1B\[[0-9;]*[mG]//g" >> "$LOG_FILE"
 }
 
 #######################################
@@ -119,29 +132,29 @@ show_interactive_menu() {
         2)
             FORCE_RENEW=true
             echo -e "${YELLOW}已选择强制续期模式${NC}"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 选择强制续期模式" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 选择强制续期模式" >> "$LOG_FILE"
             ;;
         3)
             CHECK_ONLY=true
             echo -e "${YELLOW}仅检查证书状态，不执行续期操作${NC}"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 选择仅检查模式" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 选择仅检查模式" >> "$LOG_FILE"
             ;;
         4)
             echo -e "\n${GREEN}[更新脚本]${NC}"
             echo -e "${YELLOW}提示：正在从远程服务器获取最新版本...${NC}"
             # 【修改】URL替换为您指定的renew_cert.sh地址
             wget -O "$0" "https://raw.githubusercontent.com/jasonniceo/Script/refs/heads/main/renew_cert.sh" && chmod +x "$0" && echo -e "${GREEN}更新完成，请重新运行${NC}"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 用户选择更新脚本" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 用户选择更新脚本" >> "$LOG_FILE"
             exit 0
             ;;
         5)
             echo -e "${GREEN}已退出脚本${NC}"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 用户选择退出" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 用户选择退出" >> "$LOG_FILE"
             exit 0
             ;;
         *)
             echo -e "使用默认自动模式"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 选择默认自动模式" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 选择默认自动模式" >> "$LOG_FILE"
             ;;
     esac
 }
@@ -151,7 +164,7 @@ show_interactive_menu() {
 #######################################
 auto_discover_domain() {
     echo -e "\n${GREEN}[开始自动发现域名]${NC}"
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 开始自动发现域名" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 开始自动发现域名" >> "$LOG_FILE"
     
     local domains=()
     
@@ -162,7 +175,7 @@ auto_discover_domain() {
             if [ -n "$domain" ]; then
                 domains+=("$domain")
                 echo -e "  发现域名: ${YELLOW}$domain${NC}"
-                echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 发现ECC域名：$domain" >> "$LOG_FILE"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 发现ECC域名：$domain" >> "$LOG_FILE"
             fi
         fi
     done
@@ -170,14 +183,14 @@ auto_discover_domain() {
     # 备用：从配置文件查找域名
     if [ ${#domains[@]} -eq 0 ]; then
         echo -e "  ${YELLOW}警告：未找到域名目录，尝试从acme.sh配置中查找${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [WARN] 未找到ECC域名目录，尝试从配置查找" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [WARN] 未找到ECC域名目录，尝试从配置查找" >> "$LOG_FILE"
         
         if [ -f "$ACME_HOME/account.conf" ]; then
             local recent_domain=$(grep -r "DOMAIN=" "$ACME_HOME"/*.conf 2>/dev/null | head -1 | cut -d'=' -f2)
             if [ -n "$recent_domain" ]; then
                 domains+=("$recent_domain")
                 echo -e "  从配置发现域名: ${YELLOW}$recent_domain${NC}"
-                echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 从配置发现域名：$recent_domain" >> "$LOG_FILE"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 从配置发现域名：$recent_domain" >> "$LOG_FILE"
             fi
         fi
     fi
@@ -189,18 +202,18 @@ auto_discover_domain() {
         echo -e "  1. acme.sh已正确安装"
         echo -e "  2. 已通过acme.sh申请过证书"
         echo -e "  3. 证书存放在 $ACME_HOME/ 目录下"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 未找到任何证书域名" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 未找到任何证书域名" >> "$LOG_FILE"
         return 1
     elif [ ${#domains[@]} -gt 1 ]; then
         echo -e "${YELLOW}警告：发现多个域名，将使用第一个域名: ${domains[0]}${NC}"
         echo -e "找到的域名列表: ${domains[*]}"
         echo -e "如需使用其他域名，请修改脚本或手动指定"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [WARN] 发现多个域名，使用第一个：${domains[0]}" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [WARN] 发现多个域名，使用第一个：${domains[0]}" >> "$LOG_FILE"
         DOMAIN="${domains[0]}"
     else
         DOMAIN="${domains[0]}"
         echo -e "${GREEN}自动发现域名: ${YELLOW}$DOMAIN${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 自动发现域名：$DOMAIN" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 自动发现域名：$DOMAIN" >> "$LOG_FILE"
     fi
     
     return 0
@@ -211,7 +224,7 @@ auto_discover_domain() {
 #######################################
 check_cert_paths() {
     echo -e "\n${GREEN}[检查证书路径]${NC}"
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 开始检查证书路径" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 开始检查证书路径" >> "$LOG_FILE"
     
     ECC_CERT_DIR="$ACME_HOME/${DOMAIN}_ecc"
     ACME_CERT_FILE="$ECC_CERT_DIR/fullchain.cer"
@@ -220,24 +233,24 @@ check_cert_paths() {
     echo -e "  ACME证书目录: $ECC_CERT_DIR"
     echo -e "  源证书文件: $ACME_CERT_FILE"
     echo -e "  源私钥文件: $ACME_KEY_FILE"
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 检查路径：证书=$ACME_CERT_FILE，私钥=$ACME_KEY_FILE" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 检查路径：证书=$ACME_CERT_FILE，私钥=$ACME_KEY_FILE" >> "$LOG_FILE"
     
     if [ ! -f "$ACME_CERT_FILE" ]; then
         echo -e "${RED}错误：找不到源证书文件${NC}"
         echo -e "请检查路径: $ACME_CERT_FILE"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 源证书文件不存在：$ACME_CERT_FILE" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 源证书文件不存在：$ACME_CERT_FILE" >> "$LOG_FILE"
         return 1
     fi
     
     if [ ! -f "$ACME_KEY_FILE" ]; then
         echo -e "${RED}错误：找不到源私钥文件${NC}"
         echo -e "请检查路径: $ACME_KEY_FILE"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 源私钥文件不存在：$ACME_KEY_FILE" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 源私钥文件不存在：$ACME_KEY_FILE" >> "$LOG_FILE"
         return 1
     fi
     
     echo -e "${GREEN}证书路径检查通过${NC}"
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 证书路径检查通过" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 证书路径检查通过" >> "$LOG_FILE"
     return 0
 }
 
@@ -250,7 +263,7 @@ convert_cert_time() {
     local converted_time=$(date -d "$raw_time" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)
     if [ -z "$converted_time" ]; then
         echo "无法解析时间"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [WARN] 无法解析时间：$raw_time" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [WARN] 无法解析时间：$raw_time" >> "$LOG_FILE"
     else
         echo "$converted_time"
     fi
@@ -261,7 +274,7 @@ convert_cert_time() {
 #######################################
 show_cert_status() {
     echo -e "\n${GREEN}[当前证书状态]${NC}"
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 开始显示证书状态" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 开始显示证书状态" >> "$LOG_FILE"
     
     # 检查文件存在性
     if [ -f "$ACME_CERT_FILE" ]; then
@@ -293,8 +306,8 @@ show_cert_status() {
     ls -la "$ACME_CERT_FILE" "$ACME_KEY_FILE" 2>/dev/null | awk '{print $1, $3, $4, $5, $6, $7, $8, $9}' | sed "s|$ECC_CERT_DIR/fullchain.cer|$DEFAULT_TARGET_CERT|g; s|$ECC_CERT_DIR/$DOMAIN.key|$DEFAULT_TARGET_KEY|g"
 
     # 输出状态到日志（去除颜色符）
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 证书状态：$cert_status，私钥状态：$key_status" >> "$LOG_FILE"
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 文件详情：证书=$DEFAULT_TARGET_CERT（大小=$cert_real_size，修改时间=$cert_mtime），私钥=$DEFAULT_TARGET_KEY（大小=$key_real_size，修改时间=$key_mtime）" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 证书状态：$(echo -e "$cert_status" | sed -r "s/\x1B\[[0-9;]*[mG]//g")，私钥状态：$(echo -e "$key_status" | sed -r "s/\x1B\[[0-9;]*[mG]//g")" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 文件详情：证书=$DEFAULT_TARGET_CERT（大小=$cert_real_size，修改时间=$cert_mtime），私钥=$DEFAULT_TARGET_KEY（大小=$key_real_size，修改时间=$key_mtime）" >> "$LOG_FILE"
 
     # 证书有效期解析（赋值给全局变量）
     echo -e "\n${GREEN}[证书有效期]${NC}"
@@ -320,7 +333,7 @@ show_cert_status() {
     echo -e "剩余天数: ${YELLOW}$remain_days 天${NC}"
     
     # 输出有效期到日志
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 证书有效期：生效=$not_before，到期=$not_after，剩余=$remain_days天" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 证书有效期：生效=$not_before，到期=$not_after，剩余=$remain_days天" >> "$LOG_FILE"
 }
 
 #######################################
@@ -330,31 +343,31 @@ check_cert_expiry() {
     local cert_file="$1"
     local threshold="$2"
     
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 检查证书有效期：文件=$cert_file，阈值=$threshold天" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 检查证书有效期：文件=$cert_file，阈值=$threshold天" >> "$LOG_FILE"
     
     if [ ! -f "$cert_file" ]; then
         echo -e "${RED}错误：证书文件不存在${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 检查有效期失败：证书文件不存在$cert_file" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 检查有效期失败：证书文件不存在$cert_file" >> "$LOG_FILE"
         return 2
     fi
     
     if ! command -v openssl &>/dev/null; then
         echo -e "${RED}错误：系统未安装openssl，无法解析证书有效期${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 检查有效期失败：未安装openssl" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 检查有效期失败：未安装openssl" >> "$LOG_FILE"
         return 2
     fi
     
     local end_date_raw=$(openssl x509 -enddate -noout -in "$cert_file" 2>/dev/null | cut -d= -f2)
     if [ -z "$end_date_raw" ]; then
         echo -e "${RED}错误：无法获取证书到期时间${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 检查有效期失败：无法获取到期时间" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 检查有效期失败：无法获取到期时间" >> "$LOG_FILE"
         return 2
     fi
     
     local end_date=$(convert_cert_time "$end_date_raw")
     if [ -z "$end_date" ] || [ "$end_date" = "无法解析时间" ]; then
         echo -e "${RED}错误：无法解析证书日期: $end_date_raw${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 检查有效期失败：无法解析日期$end_date_raw" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 检查有效期失败：无法解析日期$end_date_raw" >> "$LOG_FILE"
         return 2
     fi
     
@@ -370,11 +383,11 @@ check_cert_expiry() {
     # 判断是否需要续期
     if [ $remain_days -le $threshold ]; then
         echo -e "${YELLOW}证书需要续期（剩余 ≤ $threshold 天）${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 证书需要续期：剩余$remain_days天 ≤ 阈值$threshold天" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 证书需要续期：剩余$remain_days天 ≤ 阈值$threshold天" >> "$LOG_FILE"
         return 0
     else
         echo -e "${GREEN}证书有效期充足${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 证书有效期充足：剩余$remain_days天 > 阈值$threshold天" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 证书有效期充足：剩余$remain_days天 > 阈值$threshold天" >> "$LOG_FILE"
         return 1
     fi
 }
@@ -384,7 +397,7 @@ check_cert_expiry() {
 #######################################
 renew_certificate() {
     echo -e "\n${GREEN}[开始续期证书]${NC}"
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 开始执行证书续期：域名=$DOMAIN" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 开始执行证书续期：域名=$DOMAIN" >> "$LOG_FILE"
     
     echo -e "域名: ${YELLOW}$DOMAIN${NC}"
     echo -e "续期阈值: ${YELLOW}$RENEW_THRESHOLD 天${NC}"
@@ -393,25 +406,25 @@ renew_certificate() {
     if [ "$FORCE_RENEW" = true ]; then
         renew_cmd="$renew_cmd --force"
         echo -e "${YELLOW}强制续期模式已启用${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 启用强制续期模式" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 启用强制续期模式" >> "$LOG_FILE"
     fi
     
     echo -e "执行命令: $renew_cmd"
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 执行续期命令：$renew_cmd" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 执行续期命令：$renew_cmd" >> "$LOG_FILE"
     
     # 执行续期命令并捕获输出
     local renew_output
     renew_output=$(eval "$renew_cmd" 2>&1)
     echo -e "$renew_output"
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 续期命令输出：$renew_output" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 续期命令输出：$renew_output" >> "$LOG_FILE"
     
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}证书续期成功${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] 证书续期成功：域名=$DOMAIN" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] 证书续期成功：域名=$DOMAIN" >> "$LOG_FILE"
         return 0
     else
         echo -e "${RED}证书续期失败${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 证书续期失败：域名=$DOMAIN，命令输出=$renew_output" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 证书续期失败：域名=$DOMAIN，命令输出=$renew_output" >> "$LOG_FILE"
         return 1
     fi
 }
@@ -421,13 +434,13 @@ renew_certificate() {
 #######################################
 copy_certificate_files() {
     echo -e "\n${GREEN}[复制证书文件]${NC}"
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 开始复制证书文件" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 开始复制证书文件" >> "$LOG_FILE"
     
     if [ ! -f "$ACME_CERT_FILE" ] || [ ! -f "$ACME_KEY_FILE" ]; then
         echo -e "${RED}错误：源证书文件不存在${NC}"
         echo -e "证书文件: $ACME_CERT_FILE"
         echo -e "私钥文件: $ACME_KEY_FILE"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 复制证书失败：源文件不存在" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 复制证书失败：源文件不存在" >> "$LOG_FILE"
         return 1
     fi
     
@@ -438,7 +451,7 @@ copy_certificate_files() {
         cp "$DEFAULT_TARGET_CERT" "$backup_dir/cert.crt.backup"
         cp "$DEFAULT_TARGET_KEY" "$backup_dir/private.key.backup"
         echo -e "旧证书已备份到: $backup_dir"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 旧证书备份到：$backup_dir" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 旧证书备份到：$backup_dir" >> "$LOG_FILE"
     fi
     
     # 复制证书文件到目标路径
@@ -446,19 +459,19 @@ copy_certificate_files() {
     echo -e "  从: $ACME_CERT_FILE"
     echo -e "  到: $DEFAULT_TARGET_CERT"
     cp -f "$ACME_CERT_FILE" "$DEFAULT_TARGET_CERT"
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 复制证书：$ACME_CERT_FILE → $DEFAULT_TARGET_CERT" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 复制证书：$ACME_CERT_FILE → $DEFAULT_TARGET_CERT" >> "$LOG_FILE"
     
     echo -e "复制私钥文件..."
     echo -e "  从: $ACME_KEY_FILE"
     echo -e "  到: $DEFAULT_TARGET_KEY"
     cp -f "$ACME_KEY_FILE" "$DEFAULT_TARGET_KEY"
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 复制私钥：$ACME_KEY_FILE → $DEFAULT_TARGET_KEY" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 复制私钥：$ACME_KEY_FILE → $DEFAULT_TARGET_KEY" >> "$LOG_FILE"
     
     # 设置文件权限（安全加固）
     echo -e "设置文件权限..."
     chmod 644 "$DEFAULT_TARGET_CERT"  # 证书可读不可写
     chmod 600 "$DEFAULT_TARGET_KEY"   # 私钥仅所有者可读
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 设置权限：证书644，私钥600" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 设置权限：证书644，私钥600" >> "$LOG_FILE"
     
     # 验证复制结果
     if [ -f "$DEFAULT_TARGET_CERT" ] && [ -f "$DEFAULT_TARGET_KEY" ]; then
@@ -466,11 +479,11 @@ copy_certificate_files() {
         echo -e "文件权限:"
         ls -la "$DEFAULT_TARGET_KEY" "$DEFAULT_TARGET_CERT"
         echo -e "${GREEN}证书文件复制成功${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] 证书文件复制成功" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] 证书文件复制成功" >> "$LOG_FILE"
         return 0
     else
         echo -e "${RED}错误：证书文件复制失败${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 证书文件复制失败" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 证书文件复制失败" >> "$LOG_FILE"
         return 1
     fi
 }
@@ -480,7 +493,7 @@ copy_certificate_files() {
 #######################################
 restart_panel_services() {
     echo -e "\n${GREEN}[重启面板服务]${NC}"
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 开始重启面板服务" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 开始重启面板服务" >> "$LOG_FILE"
     echo -e "注意：重启服务以确保使用最新证书"
     
     local services_restarted=0  # 统计成功重启的服务数
@@ -493,21 +506,21 @@ restart_panel_services() {
         if systemctl restart "$XUI_SERVICE_NAME"; then
             echo -e "X-UI服务重启: ${GREEN}成功${NC}"
             ((services_restarted++))
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] X-UI服务重启成功" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] X-UI服务重启成功" >> "$LOG_FILE"
             sleep 2  # 等待服务重启
             if systemctl is-active --quiet "$XUI_SERVICE_NAME"; then
                 echo -e "X-UI服务状态: ${GREEN}运行正常${NC}"
             else
                 echo -e "${YELLOW}警告：X-UI服务未运行${NC}"
-                echo -e "$(date '+%Y-%m-%d %H:%M:%S') [WARN] X-UI服务重启后未运行" >> "$LOG_FILE"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') [WARN] X-UI服务重启后未运行" >> "$LOG_FILE"
             fi
         else
             echo -e "X-UI服务重启: ${RED}失败${NC}"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] X-UI服务重启失败" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] X-UI服务重启失败" >> "$LOG_FILE"
         fi
     else
         echo -e "X-UI服务状态: ${YELLOW}未运行${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] X-UI服务未运行，尝试兼容名" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] X-UI服务未运行，尝试兼容名" >> "$LOG_FILE"
         # 兼容不同X-UI服务名
         local xui_services=("x-ui" "3x-ui" "xray")
         for service in "${xui_services[@]}"; do
@@ -516,7 +529,7 @@ restart_panel_services() {
                 if systemctl restart "$service"; then
                     echo -e "$service 重启: ${GREEN}成功${NC}"
                     ((services_restarted++))
-                    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] $service服务重启成功" >> "$LOG_FILE"
+                    echo "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] $service服务重启成功" >> "$LOG_FILE"
                 fi
                 break
             fi
@@ -531,21 +544,21 @@ restart_panel_services() {
         if systemctl restart "$SUI_SERVICE_NAME"; then
             echo -e "S-UI服务重启: ${GREEN}成功${NC}"
             ((services_restarted++))
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] S-UI服务重启成功" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] S-UI服务重启成功" >> "$LOG_FILE"
             sleep 2
             if systemctl is-active --quiet "$SUI_SERVICE_NAME"; then
                 echo -e "S-UI服务状态: ${GREEN}运行正常${NC}"
             else
                 echo -e "${YELLOW}警告：S-UI服务未运行${NC}"
-                echo -e "$(date '+%Y-%m-%d %H:%M:%S') [WARN] S-UI服务重启后未运行" >> "$LOG_FILE"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') [WARN] S-UI服务重启后未运行" >> "$LOG_FILE"
             fi
         else
             echo -e "S-UI服务重启: ${RED}失败${NC}"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] S-UI服务重启失败" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] S-UI服务重启失败" >> "$LOG_FILE"
         fi
     else
         echo -e "S-UI服务状态: ${YELLOW}未运行${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] S-UI服务未运行，尝试兼容名" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] S-UI服务未运行，尝试兼容名" >> "$LOG_FILE"
         # 兼容不同S-UI服务名
         local sui_services=("s-ui" "sui" "sing-box")
         for service in "${sui_services[@]}"; do
@@ -554,7 +567,7 @@ restart_panel_services() {
                 if systemctl restart "$service"; then
                     echo -e "$service 重启: ${GREEN}成功${NC}"
                     ((services_restarted++))
-                    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] $service服务重启成功" >> "$LOG_FILE"
+                    echo "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] $service服务重启成功" >> "$LOG_FILE"
                 fi
                 break
             fi
@@ -569,35 +582,35 @@ restart_panel_services() {
         if systemctl restart "$NGINX_SERVICE_NAME"; then
             echo -e "Nginx服务重启: ${GREEN}成功${NC}"
             ((services_restarted++))
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] Nginx服务重启成功" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] Nginx服务重启成功" >> "$LOG_FILE"
             sleep 2
             if systemctl is-active --quiet "$NGINX_SERVICE_NAME"; then
                 echo -e "Nginx服务状态: ${GREEN}运行正常${NC}"
             else
                 echo -e "${YELLOW}警告：Nginx服务未运行${NC}"
-                echo -e "$(date '+%Y-%m-%d %H:%M:%S') [WARN] Nginx服务重启后未运行" >> "$LOG_FILE"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') [WARN] Nginx服务重启后未运行" >> "$LOG_FILE"
             fi
         else
             echo -e "Nginx服务重启: ${RED}失败${NC}"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] Nginx服务重启失败" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] Nginx服务重启失败" >> "$LOG_FILE"
         fi
     else
         echo -e "Nginx服务状态: ${YELLOW}未运行${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] Nginx服务未运行，尝试平滑重启" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] Nginx服务未运行，尝试平滑重启" >> "$LOG_FILE"
         if command -v nginx &>/dev/null; then
             echo -e "尝试Nginx平滑重启..."
             if nginx -s reload 2>/dev/null; then
                 echo -e "Nginx平滑重启: ${GREEN}成功${NC}"
                 ((services_restarted++))
-                echo -e "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] Nginx平滑重启成功" >> "$LOG_FILE"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] Nginx平滑重启成功" >> "$LOG_FILE"
             else
                 echo -e "Nginx平滑重启: ${RED}失败${NC}"
                 echo -e "Nginx未安装或未配置systemd服务"
-                echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] Nginx平滑重启失败" >> "$LOG_FILE"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] Nginx平滑重启失败" >> "$LOG_FILE"
             fi
         else
             echo -e "Nginx未安装或未配置systemd服务"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] Nginx未安装" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] Nginx未安装" >> "$LOG_FILE"
         fi
     fi
     
@@ -610,10 +623,10 @@ restart_panel_services() {
         echo -e "      systemctl restart x-ui"
         echo -e "      systemctl restart s-ui"
         echo -e "      systemctl restart nginx"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [WARN] 未重启任何服务" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [WARN] 未重启任何服务" >> "$LOG_FILE"
     else
         echo -e "\n${GREEN}已重启 $services_restarted 个服务${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 成功重启$services_restarted个服务" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 成功重启$services_restarted个服务" >> "$LOG_FILE"
     fi
 }
 
@@ -628,7 +641,7 @@ main() {
     if ! command -v openssl &>/dev/null; then
         echo -e "${RED}错误：系统未安装openssl，脚本无法正常运行${NC}"
         echo -e "请先安装openssl：yum install openssl -y 或 apt install openssl -y"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [FATAL] 未安装openssl，脚本退出" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [FATAL] 未安装openssl，脚本退出" >> "$LOG_FILE"
         exit 1
     fi
 
@@ -645,11 +658,11 @@ main() {
                 echo -e "${GREEN}[使用手动指定的域名]${NC}"
                 DOMAIN="$DEFAULT_DOMAIN"
                 echo -e "域名: ${YELLOW}$DOMAIN${NC}"
-                echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 仅检查模式：使用手动指定域名$DOMAIN" >> "$LOG_FILE"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 仅检查模式：使用手动指定域名$DOMAIN" >> "$LOG_FILE"
             else
                 if ! auto_discover_domain; then
                     echo -e "${RED}无法自动发现域名，请手动配置${NC}"
-                    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 仅检查模式：自动发现域名失败" >> "$LOG_FILE"
+                    echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 仅检查模式：自动发现域名失败" >> "$LOG_FILE"
                     exit 1
                 fi
             fi
@@ -664,11 +677,11 @@ main() {
             echo -e "X-UI服务名: ${YELLOW}$XUI_SERVICE_NAME${NC}"
             echo -e "S-UI服务名: ${YELLOW}$SUI_SERVICE_NAME${NC}"
             echo -e "Nginx服务名: ${YELLOW}$NGINX_SERVICE_NAME${NC}"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 仅检查模式：输出配置信息完成" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 仅检查模式：输出配置信息完成" >> "$LOG_FILE"
             
             # 检查证书路径
             if ! check_cert_paths; then
-                echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 仅检查模式：证书路径检查失败" >> "$LOG_FILE"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 仅检查模式：证书路径检查失败" >> "$LOG_FILE"
                 exit 1
             fi
             
@@ -676,7 +689,7 @@ main() {
             show_cert_status
             
             echo -e "\n${GREEN}仅检查模式完成${NC}"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] 仅检查模式执行完成" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] 仅检查模式执行完成" >> "$LOG_FILE"
             exit 0
         fi
     fi
@@ -686,11 +699,11 @@ main() {
         echo -e "${GREEN}[使用手动指定的域名]${NC}"
         DOMAIN="$DEFAULT_DOMAIN"
         echo -e "域名: ${YELLOW}$DOMAIN${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 使用手动指定域名：$DOMAIN" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 使用手动指定域名：$DOMAIN" >> "$LOG_FILE"
     else
         if ! auto_discover_domain; then
             echo -e "${RED}无法自动发现域名，请手动配置${NC}"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 自动发现域名失败，脚本退出" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 自动发现域名失败，脚本退出" >> "$LOG_FILE"
             exit 1
         fi
     fi
@@ -705,11 +718,11 @@ main() {
     echo -e "X-UI服务名: ${YELLOW}$XUI_SERVICE_NAME${NC}"
     echo -e "S-UI服务名: ${YELLOW}$SUI_SERVICE_NAME${NC}"
     echo -e "Nginx服务名: ${YELLOW}$NGINX_SERVICE_NAME${NC}"
-    echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 配置信息：域名=$DOMAIN，阈值=$RENEW_THRESHOLD天，强制续期=$FORCE_RENEW" >> "$LOG_FILE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 配置信息：域名=$DOMAIN，阈值=$RENEW_THRESHOLD天，强制续期=$FORCE_RENEW" >> "$LOG_FILE"
     
     # 步骤5：检查证书路径
     if ! check_cert_paths; then
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 证书路径检查失败，脚本退出" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 证书路径检查失败，脚本退出" >> "$LOG_FILE"
         exit 1
     fi
     
@@ -721,27 +734,27 @@ main() {
     if [ -f "$DEFAULT_TARGET_CERT" ]; then
         if [ "$FORCE_RENEW" = true ]; then
             echo -e "${YELLOW}强制续期模式：跳过有效期检查，直接执行续期${NC}"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 强制续期模式，跳过有效期检查" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 强制续期模式，跳过有效期检查" >> "$LOG_FILE"
             need_renewal=true
         elif check_cert_expiry "$DEFAULT_TARGET_CERT" "$RENEW_THRESHOLD"; then
             need_renewal=true
         fi
     else
         echo -e "\n${YELLOW}目标证书不存在，将进行首次复制${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 目标证书不存在，需要首次复制" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 目标证书不存在，需要首次复制" >> "$LOG_FILE"
         need_renewal=true
     fi
     
     # 步骤8：执行续期/复制/重启流程
     if $need_renewal; then
         echo -e "\n${YELLOW}[执行证书续期]${NC}"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 开始执行续期流程" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 开始执行续期流程" >> "$LOG_FILE"
         
         if renew_certificate; then
             echo -e "${GREEN}证书续期成功${NC}"
         else
             echo -e "${YELLOW}证书续期失败，尝试使用现有证书${NC}"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [WARN] 续期失败，尝试使用现有证书" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [WARN] 续期失败，尝试使用现有证书" >> "$LOG_FILE"
         fi
         
         if copy_certificate_files; then
@@ -749,14 +762,14 @@ main() {
             restart_panel_services
         else
             echo -e "${RED}证书文件复制失败${NC}"
-            echo -e "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 证书复制失败，脚本退出" >> "$LOG_FILE"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] 证书复制失败，脚本退出" >> "$LOG_FILE"
             exit 1
         fi
     else
         # 无需续期：检查是否需要同步最新证书
         echo -e "\n${GREEN}[是否续期]${NC}"
         echo -e "证书有效期充足，无需续期，跳过续期流程"
-        echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 证书有效期充足，无需续期" >> "$LOG_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] 证书有效期充足，无需续期" >> "$LOG_FILE"
         
         # 同步检查：acme证书更新但目标证书未更新的情况
         if [ -f "$ACME_CERT_FILE" ] && [ -f "$DEFAULT_TARGET_CERT" ]; then
@@ -764,7 +777,7 @@ main() {
             local target_time=$(stat -c %Y "$DEFAULT_TARGET_CERT" 2>/dev/null || echo 0)
             if [ $acme_time -gt $target_time ]; then
                 echo -e "${YELLOW}检测到acme.sh证书已更新，同步到目标位置${NC}"
-                echo -e "$(date '+%Y-%m-%d %H:%M:%S') [INFO] ACME证书已更新，同步到目标位置" >> "$LOG_FILE"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] ACME证书已更新，同步到目标位置" >> "$LOG_FILE"
                 if copy_certificate_files; then
                     restart_panel_services
                 fi
