@@ -530,7 +530,7 @@ main() {
     echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] 正在将完整证书链安装至：/root/cert.crt"
 
     log "INFO" "配置证书文件权限"
-    chmod -R 755 $DEFAULT_TARGET_CERT
+    chmod 644 $DEFAULT_TARGET_CERT
     chmod 600 $DEFAULT_TARGET_KEY
     log "SUCCESS" "拷贝证书及权限配置完成"
 
