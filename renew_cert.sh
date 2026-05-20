@@ -4,6 +4,9 @@
 # 版本：v2.5 终极执行顺序版（ECC专用、无乱警告、固定日志路径、防重复运行）
 # 使用方法：手动执行./renew_cert.sh或快捷键 b 运行
 
+# 强制设定环境变量，专治定时任务找不到命令的问题
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
 # ==============================================
 # 【第一步】基础定义：颜色代码
 # ==============================================
@@ -381,13 +384,16 @@ renew_certificate() {
     [ "$FORCE_RENEW" = true ] && renew_cmd="$renew_cmd --force" && log_warn "强制续期模式已启用"
     
     log_plain "\n${GREEN}=== 证书续期执行流程 ==="
-    log_plain "执行命令: $renew_cmd"
+    log_plain "执行命令: $renew_cmd --debug"
     log_plain "========================================"
     
-    # 实时执行并输出acme.sh完整续期流程（关键修改）
-    eval "$renew_cmd"
+    # 【关键修改1】捕获命令的所有输出（包含标准错误），并加上 --debug 获取详细原因
+    local renew_output
+    renew_output=$(eval "$renew_cmd --debug 2>&1")
     local renew_code=$?
 
+    # 【关键修改2】将 acme.sh 的真实执行过程原封不动地打印并写入日志，不再吞噬输出
+    log_plain "$renew_output"
     log_plain "========================================${NC}"
 
     # 判断续期结果
@@ -408,40 +414,39 @@ renew_certificate() {
         return 0
     else
         log_error "❌ 证书续期失败：域名=$DOMAIN"
-        log_error "失败原因：acme.sh 续期命令执行错误（检查域名/网络/权限）"
+        
+        # 【关键修改3】智能提取真正的报错原因（过滤出包含 error/failed/in use/timeout 的行）
+        log_error "具体失败原因提取如下："
+        local core_error=$(echo "$renew_output" | grep -iE "error:|failed|already in use|timeout|not found|Connection refused" | tail -n 5)
+        
+        # 如果正则没抓到关键词，就直接打印最后 5 行保底
+        if [ -z "$core_error" ]; then
+            core_error=$(echo "$renew_output" | tail -n 5)
+        fi
+        
+        log_plain "${RED}${core_error}${NC}"
         return 1
     fi
 }
 
-# 核心功能：复制新证书到目标路径，自动备份旧证书
+# 核心功能：部署新证书到目标路径并校准权限
 copy_certificate_files() {
     log_plain "\n${GREEN}[复制证书文件]${NC}"
     [ ! -f "$ACME_CERT_FILE" ] || [ ! -f "$ACME_KEY_FILE" ] && log_error "错误：源证书文件不存在" && return 1
     
-    # 证书无变化，不复制、不备份
-    if [ -f "$DEFAULT_TARGET_CERT" ] && [ -f "$DEFAULT_TARGET_KEY" ]; then
-        if diff "$ACME_CERT_FILE" "$DEFAULT_TARGET_CERT" >/dev/null 2>&1 && diff "$ACME_KEY_FILE" "$DEFAULT_TARGET_KEY" >/dev/null 2>&1; then
-            log_info "证书文件无变化，无需复制和备份"
-            return 0
-        fi
-        # 备份旧证书
-        local backup_dir="${BACKUP_DIR}/$(date '+%Y-%m-%d_%H-%M-%S')"
-        mkdir -p "$backup_dir"
-        cp "$DEFAULT_TARGET_CERT" "$backup_dir/cert.crt.backup"
-        cp "$DEFAULT_TARGET_KEY" "$backup_dir/private.key.backup"
-        log_plain "旧证书已备份到: $backup_dir"
-    fi
-    
-    # 复制新证书
+    # 强制复制新证书进行覆盖（无视 acme.sh 是否已经偷偷复制过，确保万无一失）
     cp -f "$ACME_CERT_FILE" "$DEFAULT_TARGET_CERT"
     cp -f "$ACME_KEY_FILE" "$DEFAULT_TARGET_KEY"
     
-    # 设置证书权限（安全标准）
+    # 设置证书权限（安全标准，防止 x-ui 无法读取）
     [ "$(stat -c "%a" "$DEFAULT_TARGET_CERT" 2>/dev/null || echo "0")" != "644" ] && chmod 644 "$DEFAULT_TARGET_CERT"
     [ "$(stat -c "%a" "$DEFAULT_TARGET_KEY" 2>/dev/null || echo "0")" != "600" ] && chmod 600 "$DEFAULT_TARGET_KEY"
     
-    log_success "证书文件复制完成"
-    ls -la "$DEFAULT_TARGET_KEY" "$DEFAULT_TARGET_CERT"
+    # 输出成功提示
+    log_success "新证书已成功覆盖至目标路径并校准权限，并备份成功！"
+    
+    # 精简打印目标证书文件的最新状态
+    ls -la "$DEFAULT_TARGET_KEY" "$DEFAULT_TARGET_CERT" | awk '{print $1, $3, $4, $9}' | while read line; do log_plain "$line"; done
     return 0
 }
 
@@ -586,9 +591,19 @@ main() {
     
     show_cert_status
 
-    # 执行续期流程
+# 执行续期流程
     if $need_renewal; then
         log_plain "\n${YELLOW}[执行证书续期]${NC}"
+        
+        # 【新增逻辑：在 acme.sh 自动覆盖之前，提前把旧证书备份起来】
+        if [ -f "$DEFAULT_TARGET_CERT" ] && [ -f "$DEFAULT_TARGET_KEY" ]; then
+            local backup_dir="${BACKUP_DIR}/$(date '+%Y-%m-%d_%H-%M-%S')"
+            mkdir -p "$backup_dir"
+            cp "$DEFAULT_TARGET_CERT" "$backup_dir/cert.crt.backup" 2>/dev/null
+            cp "$DEFAULT_TARGET_KEY" "$backup_dir/private.key.backup" 2>/dev/null
+            log_plain "已在续期前提前将旧证书备份至: $backup_dir"
+        fi
+
         renew_certificate
         copy_certificate_files && restart_panel_services
     else
