@@ -83,9 +83,9 @@ echo ""
 echo "直接按回车(Enter)即可使用推荐的默认值。"
 echo ""
 
-# CPU：默认整机 22%~30% 随机波动，自动换算单核心配额
+# CPU：默认整机 25%~30% 随机波动，自动换算单核心配额
 CORES=$(nproc)
-DEFAULT_CPU_MIN=22
+DEFAULT_CPU_MIN=25
 DEFAULT_CPU_MAX=30
 
 read -p "1. 请输入 CPU 随机占用下限/整机百分比 (默认 $DEFAULT_CPU_MIN): " INPUT_CPU_MIN </dev/tty
