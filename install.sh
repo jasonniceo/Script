@@ -152,7 +152,7 @@ release_lock() {
 }
 EOF
 
-# ================= 3. 编写 CPU 守护逻辑（动态补差，5分钟检测版） =================
+# ================= 3. 编写 CPU 守护逻辑（动态补差，30秒检测版） =================
 cat << 'EOF' > "$WORK_DIR/bin/cpu-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
@@ -164,7 +164,7 @@ CORES=$(nproc)
 [ -z "$CPU_LOW" ] && CPU_LOW=20
 [ -z "$CPU_HIGH" ] && CPU_HIGH=25
 
-log_msg "CPU worker started, target range: ${CPU_LOW}% ~ ${CPU_HIGH}% (total), cores: ${CORES}, check interval: 300s."
+log_msg "CPU worker started, target range: ${CPU_LOW}% ~ ${CPU_HIGH}% (total), cores: ${CORES}, check interval: 30s."
 
 # 读取整机CPU使用率（基于/proc/stat，0.5秒采样平均）
 get_cpu_usage() {
@@ -201,7 +201,7 @@ trap "kill -9 $PID 2>/dev/null; release_lock 'cpu'; exit" EXIT TERM INT
 # 默认先挂起，检测后再决定是否运行
 kill -STOP $PID 2>/dev/null
 RUNNING=0
-CYCLE_SEC=300
+CYCLE_SEC=30
 
 while true; do
     CURRENT_USAGE=$(get_cpu_usage)
@@ -220,7 +220,7 @@ while true; do
             RUNNING=1
         fi
         
-        # 持续运行5分钟后重新检测
+        # 持续运行30秒后重新检测
         START=$(date +%s)
         while [ $(( $(date +%s) - START )) -lt $CYCLE_SEC ]; do
             kill -CONT $PID 2>/dev/null
@@ -238,7 +238,7 @@ while true; do
         fi
         sleep $CYCLE_SEC
     else
-        # 中间区间：保持当前状态，5分钟后再复检
+        # 中间区间：保持当前状态，30秒后再复检
         if [ "$RUNNING" -eq 1 ]; then
             START=$(date +%s)
             while [ $(( $(date +%s) - START )) -lt $CYCLE_SEC ]; do
