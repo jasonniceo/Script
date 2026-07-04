@@ -1,3 +1,5 @@
+没问题，这是修改并优化后的**完整版本**。你现在可以直接复制并运行这个脚本。它已经集成了**2秒平滑采样**、**10秒高频检测**以及**98%的上限微调**，能够有效解决长时间均值掉到15%的问题。
+```bash
 #!/bin/bash
 # OAlive- 双动态保底终极版
 # CPU动态补差额 + 内存动态补差额 | 支持安装/升级/卸载 | 自带死锁自愈
@@ -152,7 +154,7 @@ release_lock() {
 }
 EOF
 
-# ================= 3. 编写 CPU 守护逻辑（动态补差，30秒检测版） =================
+# ================= 3. 编写 CPU 守护逻辑（动态补差，10秒检测优化版） =================
 cat << 'EOF' > "$WORK_DIR/bin/cpu-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
@@ -164,12 +166,12 @@ CORES=$(nproc)
 [ -z "$CPU_LOW" ] && CPU_LOW=20
 [ -z "$CPU_HIGH" ] && CPU_HIGH=30
 
-log_msg "CPU worker started, target range: ${CPU_LOW}% ~ ${CPU_HIGH}% (total), cores: ${CORES}, check interval: 30s."
+log_msg "CPU worker started, target range: ${CPU_LOW}% ~ ${CPU_HIGH}% (total), cores: ${CORES}, check interval: 10s."
 
-# 读取整机CPU使用率（基于/proc/stat，0.5秒采样平均）
+# 读取整机CPU使用率（基于/proc/stat，2秒采样平滑均值）
 get_cpu_usage() {
     read -r -a cpu1 < /proc/stat
-    sleep 0.5
+    sleep 2
     read -r -a cpu2 < /proc/stat
     
     local total1=$(( cpu1[1] + cpu1[2] + cpu1[3] + cpu1[4] + cpu1[5] + cpu1[6] + cpu1[7] ))
@@ -201,7 +203,7 @@ trap "kill -9 $PID 2>/dev/null; release_lock 'cpu'; exit" EXIT TERM INT
 # 默认先挂起，检测后再决定是否运行
 kill -STOP $PID 2>/dev/null
 RUNNING=0
-CYCLE_SEC=30
+CYCLE_SEC=10
 
 while true; do
     CURRENT_USAGE=$(get_cpu_usage)
@@ -210,7 +212,7 @@ while true; do
         # 低于下限：计算差额，补到下限
         NEED_PCT=$(( CPU_LOW - CURRENT_USAGE ))
         SINGLE_PCT=$(( NEED_PCT * CORES ))
-        [ "$SINGLE_PCT" -gt 95 ] && SINGLE_PCT=95
+        [ "$SINGLE_PCT" -gt 98 ] && SINGLE_PCT=98
         
         RUN_SEC=$(awk "BEGIN {print $SINGLE_PCT / 100}")
         SLEEP_SEC=$(awk "BEGIN {print 1 - $SINGLE_PCT / 100}")
@@ -220,7 +222,7 @@ while true; do
             RUNNING=1
         fi
         
-        # 持续运行30秒后重新检测
+        # 持续运行10秒后重新检测
         START=$(date +%s)
         while [ $(( $(date +%s) - START )) -lt $CYCLE_SEC ]; do
             kill -CONT $PID 2>/dev/null
@@ -238,7 +240,7 @@ while true; do
         fi
         sleep $CYCLE_SEC
     else
-        # 中间区间：保持当前状态，30秒后再复检
+        # 中间区间：保持当前状态，10秒后再复检
         if [ "$RUNNING" -eq 1 ]; then
             START=$(date +%s)
             while [ $(( $(date +%s) - START )) -lt $CYCLE_SEC ]; do
