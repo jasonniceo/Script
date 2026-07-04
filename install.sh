@@ -1,6 +1,6 @@
 #!/bin/bash
-# Oracle Cloud Keep-Alive Script (OAlive) - 三合一终极版（CPU随机波动优化版）
-# 支持安装/升级/卸载，自带死锁自愈，CPU占用22-30%随机波动
+# Oracle Cloud Keep-Alive Script (OAlive) - 内存动态保底版
+# CPU 22-30%随机波动 | 内存动态补差额不叠加 | 支持安装/升级/卸载 | 自带死锁自愈
 
 set -e
 
@@ -48,7 +48,7 @@ do_uninstall() {
 # ================= 主菜单界面 =================
 echo "=========================================================="
 echo "      Oracle Cloud Keep-Alive (OAlive) - 管理脚本"
-echo "              CPU随机波动优化版 (22%-30%)"
+echo "         CPU随机波动 + 内存动态保底不叠加"
 echo "=========================================================="
 echo " 1. 安装 OAlive 保活脚本"
 echo " 2. 升级 / 覆盖安装 OAlive 保活脚本"
@@ -83,9 +83,9 @@ echo ""
 echo "直接按回车(Enter)即可使用推荐的默认值。"
 echo ""
 
-# CPU：默认整机 25%~30% 随机波动，自动换算单核心配额
+# CPU：默认整机 22%~30% 随机波动，自动换算单核心配额
 CORES=$(nproc)
-DEFAULT_CPU_MIN=25
+DEFAULT_CPU_MIN=22
 DEFAULT_CPU_MAX=30
 
 read -p "1. 请输入 CPU 随机占用下限/整机百分比 (默认 $DEFAULT_CPU_MIN): " INPUT_CPU_MIN </dev/tty
@@ -98,23 +98,23 @@ CPU_MAX=${INPUT_CPU_MAX:-$DEFAULT_CPU_MAX}
 SINGLE_CPU_MIN=$((CORES * CPU_MIN))
 SINGLE_CPU_MAX=$((CORES * CPU_MAX))
 
-read -p "2. 请输入内存占用百分比 (默认 25): " INPUT_MEM_PCT </dev/tty
+read -p "2. 请输入整机最低内存占用百分比 (默认 25): " INPUT_MEM_PCT </dev/tty
 MEM_PCT=${INPUT_MEM_PCT:-25}
 
 read -p "3. 请输入网络消耗触发间隔/分钟 (默认 60): " INPUT_NET_INTERVAL </dev/tty
 NET_INTERVAL=${INPUT_NET_INTERVAL:-60}
 
-read -p "4. 请输入网络下载持续时间/分钟 (默认 6): " INPUT_NET_DURATION </dev/tty
-NET_DURATION=${INPUT_NET_DURATION:-6}
+read -p "4. 请输入网络下载持续时间/分钟 (默认 2): " INPUT_NET_DURATION </dev/tty
+NET_DURATION=${INPUT_NET_DURATION:-2}
 NET_DURATION_SEC=$((NET_DURATION * 60))
 
-read -p "5. 请输入网络限速/mbps (默认 50): " INPUT_NET_LIMIT </dev/tty
-NET_LIMIT_RAW=${INPUT_NET_LIMIT:-50}
+read -p "5. 请输入网络限速/mbps (默认 10): " INPUT_NET_LIMIT </dev/tty
+NET_LIMIT_RAW=${INPUT_NET_LIMIT:-10}
 NET_LIMIT=$(echo "$NET_LIMIT_RAW" | grep -oE '[0-9]+' || echo 10)
 
 echo ""
 echo "=> 正在使用以下配置进行安装："
-echo "CPU 随机范围: ${CPU_MIN}% ~ ${CPU_MAX}% (整机) | 内存分配: ${MEM_PCT}%"
+echo "CPU 随机范围: ${CPU_MIN}% ~ ${CPU_MAX}% (整机) | 内存保底: 整机不低于 ${MEM_PCT}%"
 echo "网络触发: 每 ${NET_INTERVAL} 分钟 | 下载时长: ${NET_DURATION} 分钟 | 限速: ${NET_LIMIT} Mbps"
 echo "=========================================================="
 sleep 2
@@ -208,39 +208,55 @@ CPUQuota=${SINGLE_CPU_MAX}%
 WantedBy=multi-user.target
 EOF
 
-# ================= 4. 编写内存分配逻辑 =================
+# ================= 4. 编写内存分配逻辑（动态保底补差额版） =================
 cat << EOF > "$WORK_DIR/bin/mem-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
 acquire_lock "mem"
-log_msg "Memory worker started."
+log_msg "Memory worker started, target: ${MEM_PCT}% of total memory (dynamic fill)."
 
 MEM_TOTAL_KB=\$(awk '/MemTotal/ {print \$2}' /proc/meminfo)
-TARGET_MB=\$((\$MEM_TOTAL_KB * ${MEM_PCT} / 100 / 1024))
+TARGET_KB=\$((MEM_TOTAL_KB * ${MEM_PCT} / 100))
 MEM_FILE="/dev/shm/oalive_mem_occupy"
 
 trap "rm -f \$MEM_FILE; release_lock 'mem'; exit" INT TERM EXIT
 
 while true; do
-    log_msg "Allocating \${TARGET_MB}MB memory..."
-    AVAIL_MB=\$(df -m /dev/shm | awk 'NR==2 {print \$4}')
-    if [ "\$TARGET_MB" -lt "\$AVAIL_MB" ]; then
-        dd if=/dev/zero of="\$MEM_FILE" bs=1M count="\$TARGET_MB" 2>/dev/null
-        log_msg "Memory allocated. Holding for 300s."
+    # 计算当前系统实际已用内存（与面板口径一致：总内存 - 可用内存）
+    MEM_AVAIL_KB=\$(awk '/MemAvailable/ {print \$2}' /proc/meminfo)
+    USED_KB=\$((MEM_TOTAL_KB - MEM_AVAIL_KB))
+    NEED_KB=\$((TARGET_KB - USED_KB))
+
+    if [ "\$NEED_KB" -gt 1024 ]; then
+        # 当前占用未达标，计算需要补充的内存量
+        NEED_MB=\$((NEED_KB / 1024))
+        AVAIL_MB=\$(df -m /dev/shm | awk 'NR==2 {print \$4}')
+        
+        if [ "\$NEED_MB" -lt "\$AVAIL_MB" ]; then
+            # 先删除旧文件，再创建对应大小的新文件
+            rm -f "\$MEM_FILE"
+            dd if=/dev/zero of="\$MEM_FILE" bs=1M count="\$NEED_MB" 2>/dev/null
+            log_msg "Memory filled: current used \$((USED_KB/1024))MB, added \${NEED_MB}MB, total target ${MEM_PCT}%."
+        else
+            log_msg "Warning: tmpfs space insufficient, cannot fill memory."
+        fi
     else
-        log_msg "Error: tmpfs space insufficient."
+        # 当前占用已达标或超额，释放脚本占用的内存
+        if [ -f "\$MEM_FILE" ]; then
+            rm -f "\$MEM_FILE"
+            log_msg "Memory already above ${MEM_PCT}%, released script occupied memory."
+        else
+            log_msg "Memory already above ${MEM_PCT}%, skip."
+        fi
     fi
-    sleep 300
-    
-    log_msg "Releasing memory. Resting for 300s."
-    rm -f "\$MEM_FILE"
+
     sleep 300
 done
 EOF
 
 cat << EOF > /etc/systemd/system/memory-limit.service
 [Unit]
-Description=OAlive Memory Limit Service
+Description=OAlive Memory Limit Service (Dynamic Fill)
 After=network.target
 
 [Service]
@@ -315,5 +331,6 @@ systemctl restart bandwidth_occupier.timer
 echo "=========================================================="
 echo "配置完成！服务已成功在后台运行/更新。"
 echo "CPU 将在 ${CPU_MIN}%~${CPU_MAX}% 整机占比之间随机波动"
+echo "内存将动态保底到整机 ${MEM_PCT}%，系统占用达标时脚本不额外占用"
 echo "查看运行日志命令: tail -f $LOG_FILE"
 echo "=========================================================="
