@@ -1,5 +1,5 @@
 #!/bin/bash
-# Oracle Cloud Keep-Alive Script (OAlive) - 管道安全交互版
+# Oracle Cloud Keep-Alive Script (OAlive) - 严格遵循 POSIX 与双重限制
 
 set -e
 
@@ -10,7 +10,7 @@ echo "=========================================================="
 echo "直接按回车(Enter)即可使用推荐的默认值。"
 echo ""
 
-# CPU 默认值计算：2-4核默认 核心数*20%，其余默认 25%
+# CPU：2到4核机器默认 核心数*20%，其他机器默认 25%
 CORES=$(nproc)
 if [ "$CORES" -ge 2 ] && [ "$CORES" -le 4 ]; then
     DEFAULT_CPU_QUOTA=$((CORES * 20))
@@ -18,7 +18,6 @@ else
     DEFAULT_CPU_QUOTA=25
 fi
 
-# </dev/tty 确保了通过 curl | bash 运行时，依然能捕获键盘输入
 read -p "1. 请输入 CPU 占用百分比 (默认 $DEFAULT_CPU_QUOTA): " INPUT_CPU_QUOTA </dev/tty
 CPU_QUOTA=${INPUT_CPU_QUOTA:-$DEFAULT_CPU_QUOTA}
 
@@ -50,7 +49,6 @@ mkdir -p "$WORK_DIR/bin"
 mkdir -p "$LOG_DIR"
 mkdir -p /var/lock/oalive
 
-# 使用 'EOF' 保持原有内部变量不被提早解析
 cat << 'EOF' > "$WORK_DIR/bin/oalive-lib.sh"
 #!/bin/bash
 LOG_FILE="/var/log/oalive/oalive.log"
@@ -81,17 +79,39 @@ release_lock() {
 EOF
 
 # ================= 2. 编写 CPU 守护逻辑 =================
+# 完全依照 POSIX 兼容机制，通过 kill -STOP/CONT 精准控制进程活跃度
 cat << 'EOF' > "$WORK_DIR/bin/cpu-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
 acquire_lock "cpu"
-log_msg "CPU worker started."
+
+PCT=$1
+[ -z "$PCT" ] && PCT=25
+log_msg "CPU worker started with ${PCT}% POSIX occupation logic."
+
+# 基于 1 秒周期的 POSIX 占用时间计算
+RUN_SEC=$(awk "BEGIN {print $PCT / 100}")
+SLEEP_SEC=$(awk "BEGIN {print 1 - $PCT / 100}")
+
+# 原生 bash 死循环，单线程拉满 1 个核心
+worker() {
+    while true; do :; done
+}
+
+worker &
+PID=$!
+trap "kill -9 $PID 2>/dev/null; release_lock 'cpu'; exit" EXIT TERM INT
+
+# 利用 POSIX 信号进行系统级限流
 while true; do
-    dd if=/dev/urandom bs=1M count=1 2>/dev/null | sha256sum > /dev/null
+    kill -CONT $PID 2>/dev/null
+    sleep $RUN_SEC
+    kill -STOP $PID 2>/dev/null
+    sleep $SLEEP_SEC
 done
 EOF
 
-# 写入带有用户配置的 systemd (注意这里使用 EOF 以便解析变量)
+# 将计算好的 CPU_QUOTA 作为参数传给脚本，同时系统级写入 CPUQuota 做双重限制
 cat << EOF > /etc/systemd/system/cpu-limit.service
 [Unit]
 Description=OAlive CPU Limit Service
@@ -99,7 +119,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/bin/bash $WORK_DIR/bin/cpu-worker.sh
+ExecStart=/bin/bash $WORK_DIR/bin/cpu-worker.sh ${CPU_QUOTA}
 Restart=always
 RestartSec=10
 CPUQuota=${CPU_QUOTA}%
@@ -109,7 +129,6 @@ WantedBy=multi-user.target
 EOF
 
 # ================= 3. 编写内存分配逻辑 =================
-# 动态注入用户配置的 MEM_PCT
 cat << EOF > "$WORK_DIR/bin/mem-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
