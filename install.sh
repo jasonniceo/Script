@@ -83,9 +83,9 @@ echo ""
 echo "直接按回车(Enter)即可使用推荐的默认值。"
 echo ""
 
-# CPU：默认整机 20%~25% 动态保底区间
+# CPU：默认整机 20%~30% 动态保底区间
 DEFAULT_CPU_LOW=20
-DEFAULT_CPU_HIGH=25
+DEFAULT_CPU_HIGH=30
 
 read -p "1. 请输入 CPU 保底下限/整机百分比 (默认 $DEFAULT_CPU_LOW): " INPUT_CPU_LOW </dev/tty
 CPU_LOW=${INPUT_CPU_LOW:-$DEFAULT_CPU_LOW}
@@ -162,7 +162,7 @@ CPU_LOW=$1
 CPU_HIGH=$2
 CORES=$(nproc)
 [ -z "$CPU_LOW" ] && CPU_LOW=20
-[ -z "$CPU_HIGH" ] && CPU_HIGH=25
+[ -z "$CPU_HIGH" ] && CPU_HIGH=30
 
 log_msg "CPU worker started, target range: ${CPU_LOW}% ~ ${CPU_HIGH}% (total), cores: ${CORES}, check interval: 30s."
 
