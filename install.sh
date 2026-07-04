@@ -97,8 +97,8 @@ CPU_HIGH=${INPUT_CPU_HIGH:-$DEFAULT_CPU_HIGH}
 CORES=$(nproc)
 SINGLE_CPU_MAX=$((CORES * CPU_HIGH))
 
-read -p "2. 请输入整机最低内存占用百分比 (默认 25): " INPUT_MEM_PCT </dev/tty
-MEM_PCT=${INPUT_MEM_PCT:-25}
+read -p "2. 请输入整机最低内存占用百分比 (默认 30): " INPUT_MEM_PCT </dev/tty
+MEM_PCT=${INPUT_MEM_PCT:-30}
 
 read -p "3. 请输入网络消耗触发间隔/分钟 (默认 60): " INPUT_NET_INTERVAL </dev/tty
 NET_INTERVAL=${INPUT_NET_INTERVAL:-60}
