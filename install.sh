@@ -1,5 +1,5 @@
 #!/bin/bash
-# Oracle Cloud Keep-Alive Script (OAlive) - Interactive Version
+# Oracle Cloud Keep-Alive Script (OAlive) - 管道安全交互版
 
 set -e
 
@@ -10,7 +10,7 @@ echo "=========================================================="
 echo "直接按回车(Enter)即可使用推荐的默认值。"
 echo ""
 
-# CPU 默认值计算
+# CPU 默认值计算：2-4核默认 核心数*20%，其余默认 25%
 CORES=$(nproc)
 if [ "$CORES" -ge 2 ] && [ "$CORES" -le 4 ]; then
     DEFAULT_CPU_QUOTA=$((CORES * 20))
@@ -18,20 +18,21 @@ else
     DEFAULT_CPU_QUOTA=25
 fi
 
-read -p "1. 请输入 CPU 占用百分比 (默认 $DEFAULT_CPU_QUOTA): " INPUT_CPU_QUOTA
+# </dev/tty 确保了通过 curl | bash 运行时，依然能捕获键盘输入
+read -p "1. 请输入 CPU 占用百分比 (默认 $DEFAULT_CPU_QUOTA): " INPUT_CPU_QUOTA </dev/tty
 CPU_QUOTA=${INPUT_CPU_QUOTA:-$DEFAULT_CPU_QUOTA}
 
-read -p "2. 请输入内存占用百分比 (默认 25): " INPUT_MEM_PCT
+read -p "2. 请输入内存占用百分比 (默认 25): " INPUT_MEM_PCT </dev/tty
 MEM_PCT=${INPUT_MEM_PCT:-25}
 
-read -p "3. 请输入网络消耗触发间隔/分钟 (默认 45): " INPUT_NET_INTERVAL
+read -p "3. 请输入网络消耗触发间隔/分钟 (默认 45): " INPUT_NET_INTERVAL </dev/tty
 NET_INTERVAL=${INPUT_NET_INTERVAL:-45}
 
-read -p "4. 请输入网络下载持续时间/分钟 (默认 6): " INPUT_NET_DURATION
+read -p "4. 请输入网络下载持续时间/分钟 (默认 6): " INPUT_NET_DURATION </dev/tty
 NET_DURATION=${INPUT_NET_DURATION:-6}
 NET_DURATION_SEC=$((NET_DURATION * 60))
 
-read -p "5. 请输入网络限速百分比 (默认 30): " INPUT_NET_LIMIT
+read -p "5. 请输入网络限速百分比 (默认 30): " INPUT_NET_LIMIT </dev/tty
 NET_LIMIT=${INPUT_NET_LIMIT:-30}
 
 echo ""
@@ -49,7 +50,7 @@ mkdir -p "$WORK_DIR/bin"
 mkdir -p "$LOG_DIR"
 mkdir -p /var/lock/oalive
 
-# 使用 'EOF' 保持原有变量不被提早解析
+# 使用 'EOF' 保持原有内部变量不被提早解析
 cat << 'EOF' > "$WORK_DIR/bin/oalive-lib.sh"
 #!/bin/bash
 LOG_FILE="/var/log/oalive/oalive.log"
@@ -90,7 +91,7 @@ while true; do
 done
 EOF
 
-# 写入带有用户配置的 systemd (注意这里使用 EOF 而不是 'EOF' 以便解析变量)
+# 写入带有用户配置的 systemd (注意这里使用 EOF 以便解析变量)
 cat << EOF > /etc/systemd/system/cpu-limit.service
 [Unit]
 Description=OAlive CPU Limit Service
@@ -108,7 +109,7 @@ WantedBy=multi-user.target
 EOF
 
 # ================= 3. 编写内存分配逻辑 =================
-# 注入用户配置的 MEM_PCT
+# 动态注入用户配置的 MEM_PCT
 cat << EOF > "$WORK_DIR/bin/mem-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
@@ -116,7 +117,7 @@ acquire_lock "mem"
 log_msg "Memory worker started."
 
 MEM_TOTAL_KB=\$(awk '/MemTotal/ {print \$2}' /proc/meminfo)
-TARGET_MB=\$((MEM_TOTAL_KB * ${MEM_PCT} / 100 / 1024))
+TARGET_MB=\$((\$MEM_TOTAL_KB * ${MEM_PCT} / 100 / 1024))
 MEM_FILE="/dev/shm/oalive_mem_occupy"
 
 trap "rm -f \$MEM_FILE; release_lock 'mem'; exit" INT TERM EXIT
@@ -170,7 +171,7 @@ if [ -z "\$SPEED_BPS" ] || [ "\$SPEED_BPS" -eq 0 ]; then
     exit 0
 fi
 
-LIMIT_BPS=\$((SPEED_BPS * ${NET_LIMIT} / 100))
+LIMIT_BPS=\$((\$SPEED_BPS * ${NET_LIMIT} / 100))
 log_msg "Speed limit set to \${LIMIT_BPS} Bytes/s. Downloading for up to ${NET_DURATION} minutes."
 
 timeout ${NET_DURATION_SEC} curl -s --limit-rate \${LIMIT_BPS} -o /dev/null "\$TEST_URL" || true
