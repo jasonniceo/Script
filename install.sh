@@ -1,12 +1,81 @@
 #!/bin/bash
-# Oracle Cloud Keep-Alive Script (OAlive) - 最终完善版
+# Oracle Cloud Keep-Alive Script (OAlive) - 三合一终极版（支持安装/升级/卸载）
 
 set -e
 
-# ================= 0. 交互式获取用户配置 =================
+WORK_DIR="/opt/oalive"
+LOG_DIR="/var/log/oalive"
+LOG_FILE="$LOG_DIR/oalive.log"
+
+# 检查 root 权限
+if [ "$EUID" -ne 0 ]; then
+    echo "错误：请使用 root 用户或 sudo 权限运行此脚本！"
+    exit 1
+fi
+
+# ================= 卸载逻辑 =================
+do_uninstall() {
+    echo "=========================================================="
+    echo "正在卸载 OAlive 保活脚本并清理系统残留..."
+    echo "=========================================================="
+    
+    # 1. 停止并禁用所有相关服务
+    echo "=> 正在停止 Systemd 服务和定时器..."
+    systemctl stop cpu-limit.service memory-limit.service bandwidth_occupier.timer bandwidth_occupier.service 2>/dev/null || true
+    systemctl disable cpu-limit.service memory-limit.service bandwidth_occupier.timer 2>/dev/null || true
+    
+    # 2. 清理服务配置文件
+    echo "=> 正在清理 Systemd 配置文件..."
+    rm -f /etc/systemd/system/cpu-limit.service \
+          /etc/systemd/system/memory-limit.service \
+          /etc/systemd/system/bandwidth_occupier.service \
+          /etc/systemd/system/bandwidth_occupier.timer
+    systemctl daemon-reload
+    
+    # 3. 清理文件目录和锁
+    echo "=> 正在删除安装文件、日志和原子锁..."
+    rm -rf "$WORK_DIR"
+    rm -rf "$LOG_DIR"
+    rm -rf /var/lock/oalive
+    
+    echo "=========================================================="
+    echo "卸载成功！所有 OAlive 残留已干净清除。"
+    echo "=========================================================="
+}
+
+# ================= 主菜单界面 =================
 echo "=========================================================="
-echo "      Oracle Cloud Keep-Alive (OAlive) - 自定义安装"
+echo "      Oracle Cloud Keep-Alive (OAlive) - 管理脚本"
 echo "=========================================================="
+echo " 1. 安装 OAlive 保活脚本"
+echo " 2. 升级 / 覆盖安装 OAlive 保活脚本"
+echo " 3. 卸载 OAlive 保活脚本"
+echo " 4. 退出"
+echo "=========================================================="
+read -p "请输入数字选择功能 [1-4] (默认 1): " MENU_CHOICE </dev/tty
+MENU_CHOICE=${MENU_CHOICE:-1}
+
+case "$MENU_CHOICE" in
+    2)
+        echo "=> 检测到升级请求，正在自动清理旧版本服务..."
+        systemctl stop cpu-limit.service memory-limit.service bandwidth_occupier.timer 2>/dev/null || true
+        rm -rf /var/lock/oalive/*
+        ;;
+    3)
+        do_uninstall
+        exit 0
+        ;;
+    4)
+        echo "已退出。"
+        exit 0
+        ;;
+    *)
+        # 默认或输入1，继续往下走安装流程
+        ;;
+esac
+
+# ================= 1. 交互式获取用户配置 =================
+echo ""
 echo "直接按回车(Enter)即可使用推荐的默认值。"
 echo ""
 
@@ -31,9 +100,7 @@ read -p "4. 请输入网络下载持续时间/分钟 (默认 2): " INPUT_NET_DUR
 NET_DURATION=${INPUT_NET_DURATION:-2}
 NET_DURATION_SEC=$((NET_DURATION * 60))
 
-# 去掉百分比概念，直接按 Mbps 限流
 read -p "5. 请输入网络限速/mbps (默认 10): " INPUT_NET_LIMIT </dev/tty
-# 提取可能带字母的输入中的纯数字
 NET_LIMIT_RAW=${INPUT_NET_LIMIT:-10}
 NET_LIMIT=$(echo "$NET_LIMIT_RAW" | grep -oE '[0-9]+' || echo 10)
 
@@ -43,11 +110,7 @@ echo "CPU 限额: ${CPU_QUOTA}% | 内存分配: ${MEM_PCT}% | 网络触发: 每 
 echo "=========================================================="
 sleep 2
 
-# ================= 1. 初始化环境与公共库 =================
-WORK_DIR="/opt/oalive"
-LOG_DIR="/var/log/oalive"
-LOG_FILE="$LOG_DIR/oalive.log"
-
+# ================= 2. 初始化环境与公共库 =================
 mkdir -p "$WORK_DIR/bin"
 mkdir -p "$LOG_DIR"
 mkdir -p /var/lock/oalive
@@ -81,7 +144,7 @@ release_lock() {
 }
 EOF
 
-# ================= 2. 编写 CPU 守护逻辑 =================
+# ================= 3. 编写 CPU 守护逻辑 =================
 cat << 'EOF' > "$WORK_DIR/bin/cpu-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
@@ -91,11 +154,9 @@ PCT=$1
 [ -z "$PCT" ] && PCT=25
 log_msg "CPU worker started with ${PCT}% POSIX occupation logic."
 
-# 基于 1 秒周期的 POSIX 占用时间计算
 RUN_SEC=$(awk "BEGIN {print $PCT / 100}")
 SLEEP_SEC=$(awk "BEGIN {print 1 - $PCT / 100}")
 
-# 原生 bash 死循环，单线程拉满 1 个核心
 worker() {
     while true; do :; done
 }
@@ -104,7 +165,6 @@ worker &
 PID=$!
 trap "kill -9 $PID 2>/dev/null; release_lock 'cpu'; exit" EXIT TERM INT
 
-# 利用 POSIX 信号进行系统级限流
 while true; do
     kill -CONT $PID 2>/dev/null
     sleep $RUN_SEC
@@ -129,7 +189,7 @@ CPUQuota=${CPU_QUOTA}%
 WantedBy=multi-user.target
 EOF
 
-# ================= 3. 编写内存分配逻辑 =================
+# ================= 4. 编写内存分配逻辑 =================
 cat << EOF > "$WORK_DIR/bin/mem-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
@@ -174,7 +234,7 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-# ================= 4. 编写网络限流消耗逻辑 =================
+# ================= 5. 编写网络限流消耗逻辑 =================
 cat << EOF > "$WORK_DIR/bin/net-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
@@ -184,7 +244,6 @@ trap "release_lock 'net'; exit" INT TERM EXIT
 TEST_URL="http://speedtest.tele2.net/100MB.zip"
 log_msg "Network worker triggered."
 
-# 将 Mbps 转换为 Bytes/s (1 Mbps = 125,000 Bytes/s)
 LIMIT_BPS=\$((${NET_LIMIT} * 125000))
 log_msg "Speed limit set to ${NET_LIMIT} Mbps (\${LIMIT_BPS} Bytes/s). Downloading for up to ${NET_DURATION} minutes."
 
@@ -215,7 +274,7 @@ RandomizedDelaySec=120
 WantedBy=timers.target
 EOF
 
-# ================= 5. 权限配置与系统激活 =================
+# ================= 6. 权限配置与系统激活 =================
 chmod -R +x "$WORK_DIR/bin/"
 
 echo "=> 重载 systemd 并启动所有 OAlive 服务..."
@@ -230,6 +289,6 @@ systemctl restart memory-limit.service
 systemctl restart bandwidth_occupier.timer
 
 echo "=========================================================="
-echo "安装完成且服务已在后台运行！"
+echo "配置完成！服务已成功在后台运行/更新。"
 echo "查看运行日志命令: tail -f $LOG_FILE"
 echo "=========================================================="
