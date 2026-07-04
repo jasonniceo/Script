@@ -100,8 +100,8 @@ read -p "4. 请输入网络下载持续时间/分钟 (默认 6): " INPUT_NET_DUR
 NET_DURATION=${INPUT_NET_DURATION:-2}
 NET_DURATION_SEC=$((NET_DURATION * 60))
 
-read -p "5. 请输入网络限速/mbps (默认 30): " INPUT_NET_LIMIT </dev/tty
-NET_LIMIT_RAW=${INPUT_NET_LIMIT:-30}
+read -p "5. 请输入网络限速/mbps (默认 50): " INPUT_NET_LIMIT </dev/tty
+NET_LIMIT_RAW=${INPUT_NET_LIMIT:-50}
 NET_LIMIT=$(echo "$NET_LIMIT_RAW" | grep -oE '[0-9]+' || echo 10)
 
 echo ""
