@@ -97,7 +97,7 @@ read -p "3. 请输入网络消耗触发间隔/分钟 (默认 60): " INPUT_NET_IN
 NET_INTERVAL=${INPUT_NET_INTERVAL:-60}
 
 read -p "4. 请输入网络下载持续时间/分钟 (默认 6): " INPUT_NET_DURATION </dev/tty
-NET_DURATION=${INPUT_NET_DURATION:-2}
+NET_DURATION=${INPUT_NET_DURATION:-6}
 NET_DURATION_SEC=$((NET_DURATION * 60))
 
 read -p "5. 请输入网络限速/mbps (默认 50): " INPUT_NET_LIMIT </dev/tty
