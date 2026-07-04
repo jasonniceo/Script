@@ -83,9 +83,9 @@ echo ""
 echo "直接按回车(Enter)即可使用推荐的默认值。"
 echo ""
 
-# CPU：默认整机 22%~30% 随机波动，自动换算单核心配额
+# CPU：默认整机 25%~30% 随机波动，自动换算单核心配额
 CORES=$(nproc)
-DEFAULT_CPU_MIN=22
+DEFAULT_CPU_MIN=25
 DEFAULT_CPU_MAX=30
 
 read -p "1. 请输入 CPU 随机占用下限/整机百分比 (默认 $DEFAULT_CPU_MIN): " INPUT_CPU_MIN </dev/tty
@@ -104,12 +104,12 @@ MEM_PCT=${INPUT_MEM_PCT:-25}
 read -p "3. 请输入网络消耗触发间隔/分钟 (默认 60): " INPUT_NET_INTERVAL </dev/tty
 NET_INTERVAL=${INPUT_NET_INTERVAL:-60}
 
-read -p "4. 请输入网络下载持续时间/分钟 (默认 2): " INPUT_NET_DURATION </dev/tty
-NET_DURATION=${INPUT_NET_DURATION:-2}
+read -p "4. 请输入网络下载持续时间/分钟 (默认 6): " INPUT_NET_DURATION </dev/tty
+NET_DURATION=${INPUT_NET_DURATION:-6}
 NET_DURATION_SEC=$((NET_DURATION * 60))
 
-read -p "5. 请输入网络限速/mbps (默认 10): " INPUT_NET_LIMIT </dev/tty
-NET_LIMIT_RAW=${INPUT_NET_LIMIT:-10}
+read -p "5. 请输入网络限速/mbps (默认 50): " INPUT_NET_LIMIT </dev/tty
+NET_LIMIT_RAW=${INPUT_NET_LIMIT:-50}
 NET_LIMIT=$(echo "$NET_LIMIT_RAW" | grep -oE '[0-9]+' || echo 10)
 
 echo ""
