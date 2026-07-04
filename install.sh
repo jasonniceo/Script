@@ -1,6 +1,6 @@
 #!/bin/bash
-# OAlive- 双动态保底终极版
-# CPU动态补差额 + 内存动态补差额 | 支持安装/升级/卸载 | 自带死锁自愈
+# OAlive- 双动态保底终极版 (多核并发优化版)
+# CPU动态补差额(完美支持1~N核) + 内存动态补差额 | 支持安装/升级/卸载 | 自带死锁自愈
 
 set -e
 
@@ -47,7 +47,7 @@ do_uninstall() {
 
 # ================= 主菜单界面 =================
 echo "=========================================================="
-echo "         OAlive - 管理脚本"
+echo "         OAlive - 管理脚本 (多核并发版)"
 echo "         CPU+内存双动态保底 | 只补差额不叠加"
 echo "=========================================================="
 echo " 1. 安装OAlive"
@@ -74,7 +74,7 @@ case "$MENU_CHOICE" in
         exit 0
         ;;
     *)
-        # 默认或输入1，继续往下走安装流程
+        # 默认继续往下走安装流程
         ;;
 esac
 
@@ -83,9 +83,9 @@ echo ""
 echo "直接按回车(Enter)即可使用推荐的默认值。"
 echo ""
 
-# CPU：默认整机 20%~30% 动态保底区间
-DEFAULT_CPU_LOW=20
-DEFAULT_CPU_HIGH=30
+# CPU：默认整机 25%~35% 动态保底区间
+DEFAULT_CPU_LOW=25
+DEFAULT_CPU_HIGH=35
 
 read -p "1. 请输入 CPU 保底下限/整机百分比 (默认 $DEFAULT_CPU_LOW): " INPUT_CPU_LOW </dev/tty
 CPU_LOW=${INPUT_CPU_LOW:-$DEFAULT_CPU_LOW}
@@ -93,9 +93,9 @@ CPU_LOW=${INPUT_CPU_LOW:-$DEFAULT_CPU_LOW}
 read -p "   请输入 CPU 停止上限/整机百分比 (默认 $DEFAULT_CPU_HIGH): " INPUT_CPU_HIGH </dev/tty
 CPU_HIGH=${INPUT_CPU_HIGH:-$DEFAULT_CPU_HIGH}
 
-# 换算单核心硬上限（systemd CPUQuota 使用）
+# 换算硬上限（systemd CPUQuota 使用）
 CORES=$(nproc)
-SINGLE_CPU_MAX=$((CORES * CPU_HIGH))
+SYSTEM_CPU_MAX=$((CORES * CPU_HIGH))
 
 read -p "2. 请输入整机最低内存占用百分比 (默认 30): " INPUT_MEM_PCT </dev/tty
 MEM_PCT=${INPUT_MEM_PCT:-30}
@@ -113,7 +113,8 @@ NET_LIMIT=$(echo "$NET_LIMIT_RAW" | grep -oE '[0-9]+' || echo 10)
 
 echo ""
 echo "=> 正在使用以下配置进行安装："
-echo "CPU 动态区间: ${CPU_LOW}% ~ ${CPU_HIGH}% (整机) | 内存保底: 整机不低于 ${MEM_PCT}%"
+echo "核心数: ${CORES} 核 | CPU 动态区间: ${CPU_LOW}% ~ ${CPU_HIGH}% (整机)"
+echo "内存保底: 整机不低于 ${MEM_PCT}%"
 echo "网络触发: 每 ${NET_INTERVAL} 分钟 | 下载时长: ${NET_DURATION} 分钟 | 限速: ${NET_LIMIT} Mbps"
 echo "=========================================================="
 sleep 2
@@ -152,7 +153,7 @@ release_lock() {
 }
 EOF
 
-# ================= 3. 编写 CPU 守护逻辑（动态补差，10秒检测优化版） =================
+# ================= 3. 编写 CPU 守护逻辑（真·多核并发切片版） =================
 cat << 'EOF' > "$WORK_DIR/bin/cpu-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
@@ -166,7 +167,7 @@ CORES=$(nproc)
 
 log_msg "CPU worker started, target range: ${CPU_LOW}% ~ ${CPU_HIGH}% (total), cores: ${CORES}, check interval: 10s."
 
-# 读取整机CPU使用率（基于/proc/stat，2秒采样平滑均值）
+# 获取平滑 CPU 占用率 (2秒采样)
 get_cpu_usage() {
     read -r -a cpu1 < /proc/stat
     sleep 2
@@ -184,67 +185,84 @@ get_cpu_usage() {
         echo 0
         return
     fi
-    
     local usage=$(( (total_diff - idle_diff) * 100 / total_diff ))
     echo "$usage"
 }
 
-# 负载进程：纯死循环，靠信号控制启停
-worker() {
-    while true; do :; done
+# 并发工作组管理
+PIDS=()
+start_workers() {
+    for i in $(seq 1 $CORES); do
+        while true; do :; done &
+        PIDS+=($!)
+    done
 }
 
-worker &
-PID=$!
-trap "kill -9 $PID 2>/dev/null; release_lock 'cpu'; exit" EXIT TERM INT
+pause_workers() {
+    for p in "${PIDS[@]}"; do kill -STOP $p 2>/dev/null || true; done
+}
 
-# 默认先挂起，检测后再决定是否运行
-kill -STOP $PID 2>/dev/null
+resume_workers() {
+    for p in "${PIDS[@]}"; do kill -CONT $p 2>/dev/null || true; done
+}
+
+cleanup() {
+    for p in "${PIDS[@]}"; do kill -9 $p 2>/dev/null || true; done
+    release_lock 'cpu'
+    exit
+}
+
+# 绑定退出信号清理子进程
+trap cleanup EXIT TERM INT
+
+# 初始化：启动所有并发进程，并立刻挂起
+start_workers
+pause_workers
+
 RUNNING=0
-CYCLE_SEC=10
+CYCLE_SEC=10 # 主检测周期
 
 while true; do
     CURRENT_USAGE=$(get_cpu_usage)
     
     if [ "$CURRENT_USAGE" -lt "$CPU_LOW" ]; then
-        # 低于下限：计算差额，补到下限
+        # 需补足的整机百分比
         NEED_PCT=$(( CPU_LOW - CURRENT_USAGE ))
-        SINGLE_PCT=$(( NEED_PCT * CORES ))
-        [ "$SINGLE_PCT" -gt 98 ] && SINGLE_PCT=98
         
-        RUN_SEC=$(awk "BEGIN {print $SINGLE_PCT / 100}")
-        SLEEP_SEC=$(awk "BEGIN {print 1 - $SINGLE_PCT / 100}")
+        # 防止极端卡死，最高补80%
+        [ "$NEED_PCT" -gt 80 ] && NEED_PCT=80 
+        
+        # 时间切片法：因已开了 N 个进程对应 N 个核，只需让每个进程跑 NEED_PCT 的时间，即可完美达到整机负载。
+        RUN_SEC=$(awk "BEGIN {printf \"%.3f\", $NEED_PCT / 100}")
+        SLEEP_SEC=$(awk "BEGIN {printf \"%.3f\", 1 - ($NEED_PCT / 100)}")
         
         if [ "$RUNNING" -eq 0 ]; then
-            log_msg "CPU usage ${CURRENT_USAGE}% < ${CPU_LOW}%, start filling, add ${NEED_PCT}%."
+            log_msg "CPU usage ${CURRENT_USAGE}% < ${CPU_LOW}%, start filling, add ${NEED_PCT}%. (Run: ${RUN_SEC}s, Sleep: ${SLEEP_SEC}s)"
             RUNNING=1
         fi
         
-        # 持续运行10秒后重新检测
-        START=$(date +%s)
-        while [ $(( $(date +%s) - START )) -lt $CYCLE_SEC ]; do
-            kill -CONT $PID 2>/dev/null
+        # 在 10 秒周期内进行微秒级的启停切片
+        for ((i=0; i<CYCLE_SEC; i++)); do
+            resume_workers
             sleep $RUN_SEC
-            kill -STOP $PID 2>/dev/null
+            pause_workers
             sleep $SLEEP_SEC
         done
         
     elif [ "$CURRENT_USAGE" -gt "$CPU_HIGH" ]; then
-        # 高于上限：完全停止占用
         if [ "$RUNNING" -eq 1 ]; then
-            kill -STOP $PID 2>/dev/null
+            pause_workers
             log_msg "CPU usage ${CURRENT_USAGE}% > ${CPU_HIGH}%, stop filling."
             RUNNING=0
         fi
         sleep $CYCLE_SEC
     else
-        # 中间区间：保持当前状态，10秒后再复检
+        # 处于区间内，保持现有状态继续运行切片
         if [ "$RUNNING" -eq 1 ]; then
-            START=$(date +%s)
-            while [ $(( $(date +%s) - START )) -lt $CYCLE_SEC ]; do
-                kill -CONT $PID 2>/dev/null
+            for ((i=0; i<CYCLE_SEC; i++)); do
+                resume_workers
                 sleep $RUN_SEC
-                kill -STOP $PID 2>/dev/null
+                pause_workers
                 sleep $SLEEP_SEC
             done
         else
@@ -256,24 +274,23 @@ EOF
 
 cat << EOF > /etc/systemd/system/cpu-limit.service
 [Unit]
-Description=OAlive CPU Limit Service (Dynamic Fill)
+Description=OAlive CPU Limit Service (Multi-Core Dynamic Fill)
 After=network.target
 
 [Service]
 Type=simple
-# 启动前自动清理残留死锁
 ExecStartPre=-/bin/rm -rf /var/lock/oalive/cpu.lock
 ExecStart=/bin/bash $WORK_DIR/bin/cpu-worker.sh ${CPU_LOW} ${CPU_HIGH}
 Restart=always
 RestartSec=10
-# 单核心硬上限，防止异常超量
-CPUQuota=${SINGLE_CPU_MAX}%
+# systemd 绝对物理硬限制，防止异常满载，按整机换算
+CPUQuota=${SYSTEM_CPU_MAX}%
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# ================= 4. 编写内存分配逻辑（动态保底补差额版） =================
+# ================= 4. 编写内存分配逻辑 =================
 cat << EOF > "$WORK_DIR/bin/mem-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
@@ -287,18 +304,15 @@ MEM_FILE="/dev/shm/oalive_mem_occupy"
 trap "rm -f \$MEM_FILE; release_lock 'mem'; exit" INT TERM EXIT
 
 while true; do
-    # 计算当前系统实际已用内存（与面板口径一致：总内存 - 可用内存）
     MEM_AVAIL_KB=\$(awk '/MemAvailable/ {print \$2}' /proc/meminfo)
     USED_KB=\$((MEM_TOTAL_KB - MEM_AVAIL_KB))
     NEED_KB=\$((TARGET_KB - USED_KB))
 
     if [ "\$NEED_KB" -gt 1024 ]; then
-        # 当前占用未达标，计算需要补充的内存量
         NEED_MB=\$((NEED_KB / 1024))
         AVAIL_MB=\$(df -m /dev/shm | awk 'NR==2 {print \$4}')
         
         if [ "\$NEED_MB" -lt "\$AVAIL_MB" ]; then
-            # 先删除旧文件，再创建对应大小的新文件
             rm -f "\$MEM_FILE"
             dd if=/dev/zero of="\$MEM_FILE" bs=1M count="\$NEED_MB" 2>/dev/null
             log_msg "Memory filled: current used \$((USED_KB/1024))MB, added \${NEED_MB}MB, total target ${MEM_PCT}%."
@@ -306,7 +320,6 @@ while true; do
             log_msg "Warning: tmpfs space insufficient, cannot fill memory."
         fi
     else
-        # 当前占用已达标或超额，释放脚本占用的内存
         if [ -f "\$MEM_FILE" ]; then
             rm -f "\$MEM_FILE"
             log_msg "Memory already above ${MEM_PCT}%, released script occupied memory."
@@ -324,7 +337,6 @@ After=network.target
 
 [Service]
 Type=simple
-# 启动前清理锁和内存残留文件
 ExecStartPre=-/bin/rm -rf /var/lock/oalive/mem.lock
 ExecStartPre=-/bin/rm -f /dev/shm/oalive_mem_occupy
 ExecStart=/bin/bash $WORK_DIR/bin/mem-worker.sh
@@ -359,7 +371,6 @@ After=network.target
 
 [Service]
 Type=oneshot
-# 启动前清理网络任务残留死锁
 ExecStartPre=-/bin/rm -rf /var/lock/oalive/net.lock
 ExecStart=/bin/bash $WORK_DIR/bin/net-worker.sh
 EOF
@@ -393,7 +404,8 @@ systemctl restart bandwidth_occupier.timer
 
 echo "=========================================================="
 echo "配置完成！服务已成功在后台运行/更新。"
-echo "CPU 动态区间: ${CPU_LOW}% ~ ${CPU_HIGH}%（整机，只补差额不叠加）"
+echo "核心数: ${CORES}核并发行驶"
+echo "CPU 动态区间: ${CPU_LOW}% ~ ${CPU_HIGH}%（整机，多核切片补差额不叠加）"
 echo "内存动态保底: 整机不低于 ${MEM_PCT}%（系统占用达标自动停止）"
 echo "查看运行日志命令: tail -f $LOG_FILE"
 echo "=========================================================="
