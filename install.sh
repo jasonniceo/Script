@@ -1,5 +1,5 @@
 #!/bin/bash
-# Oracle Cloud Keep-Alive Script (OAlive) - 严格遵循 POSIX 与双重限制
+# Oracle Cloud Keep-Alive Script (OAlive) - 最终完善版
 
 set -e
 
@@ -24,19 +24,22 @@ CPU_QUOTA=${INPUT_CPU_QUOTA:-$DEFAULT_CPU_QUOTA}
 read -p "2. 请输入内存占用百分比 (默认 25): " INPUT_MEM_PCT </dev/tty
 MEM_PCT=${INPUT_MEM_PCT:-25}
 
-read -p "3. 请输入网络消耗触发间隔/分钟 (默认 45): " INPUT_NET_INTERVAL </dev/tty
-NET_INTERVAL=${INPUT_NET_INTERVAL:-45}
+read -p "3. 请输入网络消耗触发间隔/分钟 (默认 60): " INPUT_NET_INTERVAL </dev/tty
+NET_INTERVAL=${INPUT_NET_INTERVAL:-60}
 
-read -p "4. 请输入网络下载持续时间/分钟 (默认 6): " INPUT_NET_DURATION </dev/tty
-NET_DURATION=${INPUT_NET_DURATION:-6}
+read -p "4. 请输入网络下载持续时间/分钟 (默认 2): " INPUT_NET_DURATION </dev/tty
+NET_DURATION=${INPUT_NET_DURATION:-2}
 NET_DURATION_SEC=$((NET_DURATION * 60))
 
-read -p "5. 请输入网络限速百分比 (默认 30): " INPUT_NET_LIMIT </dev/tty
-NET_LIMIT=${INPUT_NET_LIMIT:-30}
+# 去掉百分比概念，直接按 Mbps 限流
+read -p "5. 请输入网络限速/mbps (默认 10): " INPUT_NET_LIMIT </dev/tty
+# 提取可能带字母的输入中的纯数字
+NET_LIMIT_RAW=${INPUT_NET_LIMIT:-10}
+NET_LIMIT=$(echo "$NET_LIMIT_RAW" | grep -oE '[0-9]+' || echo 10)
 
 echo ""
 echo "=> 正在使用以下配置进行安装："
-echo "CPU 限额: ${CPU_QUOTA}% | 内存分配: ${MEM_PCT}% | 网络触发: 每 ${NET_INTERVAL} 分钟 | 下载时长: ${NET_DURATION} 分钟 | 限速: ${NET_LIMIT}%"
+echo "CPU 限额: ${CPU_QUOTA}% | 内存分配: ${MEM_PCT}% | 网络触发: 每 ${NET_INTERVAL} 分钟 | 下载时长: ${NET_DURATION} 分钟 | 限速: ${NET_LIMIT} Mbps"
 echo "=========================================================="
 sleep 2
 
@@ -79,7 +82,6 @@ release_lock() {
 EOF
 
 # ================= 2. 编写 CPU 守护逻辑 =================
-# 完全依照 POSIX 兼容机制，通过 kill -STOP/CONT 精准控制进程活跃度
 cat << 'EOF' > "$WORK_DIR/bin/cpu-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
@@ -111,7 +113,6 @@ while true; do
 done
 EOF
 
-# 将计算好的 CPU_QUOTA 作为参数传给脚本，同时系统级写入 CPUQuota 做双重限制
 cat << EOF > /etc/systemd/system/cpu-limit.service
 [Unit]
 Description=OAlive CPU Limit Service
@@ -173,7 +174,7 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-# ================= 4. 编写网络测速及限流消耗逻辑 =================
+# ================= 4. 编写网络限流消耗逻辑 =================
 cat << EOF > "$WORK_DIR/bin/net-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
@@ -181,17 +182,11 @@ acquire_lock "net"
 trap "release_lock 'net'; exit" INT TERM EXIT
 
 TEST_URL="http://speedtest.tele2.net/100MB.zip"
-log_msg "Network worker triggered. Starting speed test..."
+log_msg "Network worker triggered."
 
-SPEED_BPS=\$(curl -s -w "%{speed_download}" -m 15 -o /dev/null "\$TEST_URL" | cut -d'.' -f1)
-
-if [ -z "\$SPEED_BPS" ] || [ "\$SPEED_BPS" -eq 0 ]; then
-    log_msg "Speed test failed. Exiting."
-    exit 0
-fi
-
-LIMIT_BPS=\$((\$SPEED_BPS * ${NET_LIMIT} / 100))
-log_msg "Speed limit set to \${LIMIT_BPS} Bytes/s. Downloading for up to ${NET_DURATION} minutes."
+# 将 Mbps 转换为 Bytes/s (1 Mbps = 125,000 Bytes/s)
+LIMIT_BPS=\$((${NET_LIMIT} * 125000))
+log_msg "Speed limit set to ${NET_LIMIT} Mbps (\${LIMIT_BPS} Bytes/s). Downloading for up to ${NET_DURATION} minutes."
 
 timeout ${NET_DURATION_SEC} curl -s --limit-rate \${LIMIT_BPS} -o /dev/null "\$TEST_URL" || true
 log_msg "Network consumption cycle finished."
