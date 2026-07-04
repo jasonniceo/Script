@@ -1,5 +1,5 @@
 #!/bin/bash
-# Oracle Cloud Keep-Alive Script (OAlive) - 三合一终极版（支持安装/升级/卸载）
+# Oracle Cloud Keep-Alive Script (OAlive) - 三合一终极版（支持安装/升级/卸载，自带死锁自愈）
 
 set -e
 
@@ -37,6 +37,7 @@ do_uninstall() {
     rm -rf "$WORK_DIR"
     rm -rf "$LOG_DIR"
     rm -rf /var/lock/oalive
+    rm -f /dev/shm/oalive_mem_occupy
     
     echo "=========================================================="
     echo "卸载成功！所有 OAlive 残留已干净清除。"
@@ -60,6 +61,7 @@ case "$MENU_CHOICE" in
         echo "=> 检测到升级请求，正在自动清理旧版本服务..."
         systemctl stop cpu-limit.service memory-limit.service bandwidth_occupier.timer 2>/dev/null || true
         rm -rf /var/lock/oalive/*
+        rm -f /dev/shm/oalive_mem_occupy
         ;;
     3)
         do_uninstall
@@ -180,6 +182,8 @@ After=network.target
 
 [Service]
 Type=simple
+# 核心改动：启动前自动清理残留的死锁，前面的减号代表忽略可能报错
+ExecStartPre=-/bin/rm -rf /var/lock/oalive/cpu.lock
 ExecStart=/bin/bash $WORK_DIR/bin/cpu-worker.sh ${CPU_QUOTA}
 Restart=always
 RestartSec=10
@@ -226,6 +230,9 @@ After=network.target
 
 [Service]
 Type=simple
+# 核心改动：不仅清理文件锁，还自动清理可能残留在内存盘里的垃圾文件
+ExecStartPre=-/bin/rm -rf /var/lock/oalive/mem.lock
+ExecStartPre=-/bin/rm -f /dev/shm/oalive_mem_occupy
 ExecStart=/bin/bash $WORK_DIR/bin/mem-worker.sh
 Restart=always
 RestartSec=10
@@ -258,6 +265,8 @@ After=network.target
 
 [Service]
 Type=oneshot
+# 核心改动：清理网络任务的残留死锁
+ExecStartPre=-/bin/rm -rf /var/lock/oalive/net.lock
 ExecStart=/bin/bash $WORK_DIR/bin/net-worker.sh
 EOF
 
@@ -289,6 +298,6 @@ systemctl restart memory-limit.service
 systemctl restart bandwidth_occupier.timer
 
 echo "=========================================================="
-echo "配置完成！服务已成功在后台运行/更新。"
+echo "配置完成！服务已成功在后台运行/更新 (已启用死锁自愈机制)。"
 echo "查看运行日志命令: tail -f $LOG_FILE"
 echo "=========================================================="
