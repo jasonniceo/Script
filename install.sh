@@ -152,7 +152,7 @@ release_lock() {
 }
 EOF
 
-# ================= 3. 编写 CPU 守护逻辑（动态补差，30秒检测版） =================
+# ================= 3. 编写 CPU 守护逻辑（动态补差） =================
 cat << 'EOF' > "$WORK_DIR/bin/cpu-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
@@ -164,7 +164,7 @@ CORES=$(nproc)
 [ -z "$CPU_LOW" ] && CPU_LOW=20
 [ -z "$CPU_HIGH" ] && CPU_HIGH=25
 
-log_msg "CPU worker started, target range: ${CPU_LOW}% ~ ${CPU_HIGH}% (total), cores: ${CORES}, check interval: 30s."
+log_msg "CPU worker started, target range: ${CPU_LOW}% ~ ${CPU_HIGH}% (total), cores: ${CORES}."
 
 # 读取整机CPU使用率（基于/proc/stat，0.5秒采样平均）
 get_cpu_usage() {
@@ -201,7 +201,6 @@ trap "kill -9 $PID 2>/dev/null; release_lock 'cpu'; exit" EXIT TERM INT
 # 默认先挂起，检测后再决定是否运行
 kill -STOP $PID 2>/dev/null
 RUNNING=0
-CYCLE_SEC=30
 
 while true; do
     CURRENT_USAGE=$(get_cpu_usage)
@@ -209,7 +208,9 @@ while true; do
     if [ "$CURRENT_USAGE" -lt "$CPU_LOW" ]; then
         # 低于下限：计算差额，补到下限
         NEED_PCT=$(( CPU_LOW - CURRENT_USAGE ))
+        # 整机差额换算为单核心占空比
         SINGLE_PCT=$(( NEED_PCT * CORES ))
+        # 单核心占比最大不超过95%，防止异常
         [ "$SINGLE_PCT" -gt 95 ] && SINGLE_PCT=95
         
         RUN_SEC=$(awk "BEGIN {print $SINGLE_PCT / 100}")
@@ -220,9 +221,8 @@ while true; do
             RUNNING=1
         fi
         
-        # 持续运行30秒后重新检测
-        START=$(date +%s)
-        while [ $(( $(date +%s) - START )) -lt $CYCLE_SEC ]; do
+        # 运行5个周期（5秒）后重新检测
+        for ((i=0; i<5; i++)); do
             kill -CONT $PID 2>/dev/null
             sleep $RUN_SEC
             kill -STOP $PID 2>/dev/null
@@ -236,19 +236,19 @@ while true; do
             log_msg "CPU usage ${CURRENT_USAGE}% > ${CPU_HIGH}%, stop filling."
             RUNNING=0
         fi
-        sleep $CYCLE_SEC
+        sleep 5
     else
-        # 中间区间：保持当前状态，30秒后再复检
+        # 中间区间：保持当前状态，不频繁调整
         if [ "$RUNNING" -eq 1 ]; then
-            START=$(date +%s)
-            while [ $(( $(date +%s) - START )) -lt $CYCLE_SEC ]; do
+            # 保持当前占比运行
+            for ((i=0; i<5; i++)); do
                 kill -CONT $PID 2>/dev/null
                 sleep $RUN_SEC
                 kill -STOP $PID 2>/dev/null
                 sleep $SLEEP_SEC
             done
         else
-            sleep $CYCLE_SEC
+            sleep 5
         fi
     fi
 done
