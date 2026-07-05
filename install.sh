@@ -275,7 +275,7 @@ CPUQuota=${SYSTEM_CPU_MAX}%
 WantedBy=multi-user.target
 EOF
 
-# ================= 4. 编写内存分配逻辑 =================
+# ================= 4. 编写内存分配逻辑（引入容忍度与秒级分配优化版） =================
 cat << 'EOF' > "$WORK_DIR/bin/mem-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
@@ -285,6 +285,8 @@ MEM_PCT=$1
 MEM_TOTAL_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
 TARGET_KB=$(( MEM_TOTAL_KB * MEM_PCT / 100 ))
 MEM_FILE="/dev/shm/oalive_mem_occupy"
+# 设定容忍度阈值：100MB（102400 KB），避免因微小波动频繁重建文件
+TOLERANCE_KB=102400 
 
 trap "rm -f $MEM_FILE; release_lock 'mem'; exit" INT TERM EXIT
 
@@ -293,18 +295,26 @@ while true; do
     USED_KB=$(( MEM_TOTAL_KB - MEM_AVAIL_KB ))
     NEED_KB=$(( TARGET_KB - USED_KB ))
 
-    if [ "$NEED_KB" -gt 1024 ]; then
+    # 只有当缺口大于 100MB 时，才进行补足
+    if [ "$NEED_KB" -gt "$TOLERANCE_KB" ]; then
         NEED_MB=$(( NEED_KB / 1024 ))
         AVAIL_MB=$(df -m /dev/shm | awk 'NR==2 {print $4}')
+        
         if [ "$NEED_MB" -lt "$AVAIL_MB" ]; then
             rm -f "$MEM_FILE"
-            dd if=/dev/zero of="$MEM_FILE" bs=1M count="$NEED_MB" 2>/dev/null
+            # 优先使用 fallocate 瞬间分配空间，0 CPU 损耗。若失败则退回使用 dd
+            fallocate -l "${NEED_MB}M" "$MEM_FILE" 2>/dev/null || dd if=/dev/zero of="$MEM_FILE" bs=1M count="$NEED_MB" 2>/dev/null
+            log_msg "Memory adjusted: Added ${NEED_MB}MB to reach ~${MEM_PCT}%."
         fi
-    else
+    # 只有当超出目标 100MB 以上，才释放脚本内存，给真实业务让路
+    elif [ "$NEED_KB" -lt "-$TOLERANCE_KB" ]; then
         if [ -f "$MEM_FILE" ]; then
             rm -f "$MEM_FILE"
+            log_msg "System memory pressure detected (Exceeded target). Released script memory."
         fi
     fi
+    
+    # 检查周期可以保持在 5 分钟
     sleep 300
 done
 EOF
