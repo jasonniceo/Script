@@ -1,6 +1,6 @@
 #!/bin/bash
-# OAlive- 双动态保底终极版 (双进程闭环补偿版)
-# CPU动态补差额(真闭环反馈无盲区) + 内存动态补差额 | 支持安装/升级/卸载 | 自带死锁自愈
+# OAlive- 双动态保底终极版 (双进程闭环补偿 + 随机心跳防测版)
+# 解决算力掉线死角 | 有机随机波动 | 多节点轮询下载
 
 set -e
 
@@ -41,8 +41,8 @@ do_uninstall() {
 
 # ================= 主菜单界面 =================
 echo "=========================================================="
-echo "         OAlive - 管理脚本 (PID闭环补偿版)"
-echo "         解决算力掉线死角 | 真实测算，自动追平"
+echo "         OAlive - 管理脚本 (终极防检测版)"
+echo "         PID闭环补偿 | 随机心跳抖动 | 测速节点轮询"
 echo "=========================================================="
 echo " 1. 安装OAlive"
 echo " 2. 升级覆盖安装OAlive"
@@ -105,8 +105,9 @@ NET_LIMIT=$(echo "$NET_LIMIT_RAW" | grep -oE '[0-9]+' || echo 10)
 
 echo ""
 echo "=> 正在使用以下配置进行安装："
-echo "核心数: ${CORES} 核 | CPU 动态区间: ${CPU_LOW}% ~ ${CPU_HIGH}% (整机)"
+echo "核心数: ${CORES} 核 | CPU 动态区间: ${CPU_LOW}% ~ ${CPU_HIGH}% (加入随机心跳)"
 echo "内存保底: 整机不低于 ${MEM_PCT}%"
+echo "网络触发: 每 ${NET_INTERVAL} 分钟 | 持续: ${NET_DURATION} 分钟 | 限速: ${NET_LIMIT} Mbps"
 echo "=========================================================="
 sleep 2
 
@@ -139,7 +140,7 @@ release_lock() {
 }
 EOF
 
-# ================= 3. 编写 CPU 守护逻辑（PID反馈闭环版） =================
+# ================= 3. 编写 CPU 守护逻辑（PID反馈 + 随机抖动版） =================
 cat << 'EOF' > "$WORK_DIR/bin/cpu-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
@@ -151,7 +152,7 @@ CORES=$(nproc)
 [ -z "$CPU_LOW" ] && CPU_LOW=25
 [ -z "$CPU_HIGH" ] && CPU_HIGH=35
 
-log_msg "CPU Worker (Feedback loop) started. Target: ${CPU_LOW}% ~ ${CPU_HIGH}%, Cores: ${CORES}"
+log_msg "CPU Worker started. Dynamic Target Range: ${CPU_LOW}% ~ ${CPU_HIGH}%, Cores: ${CORES}"
 
 get_cpu_usage() {
     read -r -a cpu1 < /proc/stat
@@ -184,7 +185,6 @@ resume_workers() {
     for p in "${PIDS[@]}"; do kill -CONT $p 2>/dev/null || true; done
 }
 
-# 进程解耦：独立的发力引擎，永远不会被测算过程阻塞
 TARGET_FILE="/dev/shm/oalive_cpu_target"
 echo "0 1" > "$TARGET_FILE"
 
@@ -225,21 +225,23 @@ MAINTAINER_PID=$!
 
 CURRENT_ADDED=0
 
-# 闭环测算引擎：根据真实反馈不断修剪油门
+# 闭环测算引擎：加入有机抖动 (Organic Jitter)
 while true; do
     CURRENT_USAGE=$(get_cpu_usage)
     
-    if [ "$CURRENT_USAGE" -lt "$CPU_LOW" ]; then
-        DIFF=$(( CPU_LOW - CURRENT_USAGE ))
+    # 在设定的上下限之间生成一个随机目标，模拟真实业务的波峰波谷
+    DYNAMIC_TARGET=$(( RANDOM % (CPU_HIGH - CPU_LOW + 1) + CPU_LOW ))
+    
+    if [ "$CURRENT_USAGE" -lt "$DYNAMIC_TARGET" ]; then
+        DIFF=$(( DYNAMIC_TARGET - CURRENT_USAGE ))
         CURRENT_ADDED=$(( CURRENT_ADDED + DIFF ))
-        # 兜底防爆锁，内部油门最高踩到 90%
         [ "$CURRENT_ADDED" -gt 90 ] && CURRENT_ADDED=90
-        log_msg "Current: ${CURRENT_USAGE}%. Too low. Throttle pushed to ${CURRENT_ADDED}%."
-    elif [ "$CURRENT_USAGE" -gt "$CPU_HIGH" ]; then
-        DIFF=$(( CURRENT_USAGE - CPU_HIGH ))
+        log_msg "Current: ${CURRENT_USAGE}%. Target: ${DYNAMIC_TARGET}%. Throttle pushed to ${CURRENT_ADDED}%."
+    elif [ "$CURRENT_USAGE" -gt "$DYNAMIC_TARGET" ]; then
+        DIFF=$(( CURRENT_USAGE - DYNAMIC_TARGET ))
         CURRENT_ADDED=$(( CURRENT_ADDED - DIFF ))
         [ "$CURRENT_ADDED" -lt 0 ] && CURRENT_ADDED=0
-        log_msg "Current: ${CURRENT_USAGE}%. Too high. Throttle reduced to ${CURRENT_ADDED}%."
+        log_msg "Current: ${CURRENT_USAGE}%. Target: ${DYNAMIC_TARGET}%. Throttle reduced to ${CURRENT_ADDED}%."
     fi
     
     if [ "$CURRENT_ADDED" -gt 0 ]; then
@@ -250,14 +252,15 @@ while true; do
         echo "0 1" > "$TARGET_FILE"
     fi
     
-    # 检测间隔缩短至 5 秒，让系统更灵敏
-    sleep 5
+    # 休眠时间加入随机性 (4 到 8 秒之间)，打破固定检测频率的机器特征
+    RANDOM_SLEEP=$(( RANDOM % 5 + 4 ))
+    sleep $RANDOM_SLEEP
 done
 EOF
 
 cat << EOF > /etc/systemd/system/cpu-limit.service
 [Unit]
-Description=OAlive CPU Limit Service (Feedback Loop)
+Description=OAlive CPU Limit Service (Organic Jitter)
 After=network.target
 
 [Service]
@@ -273,32 +276,33 @@ WantedBy=multi-user.target
 EOF
 
 # ================= 4. 编写内存分配逻辑 =================
-cat << EOF > "$WORK_DIR/bin/mem-worker.sh"
+cat << 'EOF' > "$WORK_DIR/bin/mem-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
 acquire_lock "mem"
 
-MEM_TOTAL_KB=\$(awk '/MemTotal/ {print \$2}' /proc/meminfo)
-TARGET_KB=\$((MEM_TOTAL_KB * ${MEM_PCT} / 100))
+MEM_PCT=$1
+MEM_TOTAL_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+TARGET_KB=$(( MEM_TOTAL_KB * MEM_PCT / 100 ))
 MEM_FILE="/dev/shm/oalive_mem_occupy"
 
-trap "rm -f \$MEM_FILE; release_lock 'mem'; exit" INT TERM EXIT
+trap "rm -f $MEM_FILE; release_lock 'mem'; exit" INT TERM EXIT
 
 while true; do
-    MEM_AVAIL_KB=\$(awk '/MemAvailable/ {print \$2}' /proc/meminfo)
-    USED_KB=\$((MEM_TOTAL_KB - MEM_AVAIL_KB))
-    NEED_KB=\$((TARGET_KB - USED_KB))
+    MEM_AVAIL_KB=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
+    USED_KB=$(( MEM_TOTAL_KB - MEM_AVAIL_KB ))
+    NEED_KB=$(( TARGET_KB - USED_KB ))
 
-    if [ "\$NEED_KB" -gt 1024 ]; then
-        NEED_MB=\$((NEED_KB / 1024))
-        AVAIL_MB=\$(df -m /dev/shm | awk 'NR==2 {print \$4}')
-        if [ "\$NEED_MB" -lt "\$AVAIL_MB" ]; then
-            rm -f "\$MEM_FILE"
-            dd if=/dev/zero of="\$MEM_FILE" bs=1M count="\$NEED_MB" 2>/dev/null
+    if [ "$NEED_KB" -gt 1024 ]; then
+        NEED_MB=$(( NEED_KB / 1024 ))
+        AVAIL_MB=$(df -m /dev/shm | awk 'NR==2 {print $4}')
+        if [ "$NEED_MB" -lt "$AVAIL_MB" ]; then
+            rm -f "$MEM_FILE"
+            dd if=/dev/zero of="$MEM_FILE" bs=1M count="$NEED_MB" 2>/dev/null
         fi
     else
-        if [ -f "\$MEM_FILE" ]; then
-            rm -f "\$MEM_FILE"
+        if [ -f "$MEM_FILE" ]; then
+            rm -f "$MEM_FILE"
         fi
     fi
     sleep 300
@@ -314,7 +318,7 @@ After=network.target
 Type=simple
 ExecStartPre=-/bin/rm -rf /var/lock/oalive/mem.lock
 ExecStartPre=-/bin/rm -f /dev/shm/oalive_mem_occupy
-ExecStart=/bin/bash $WORK_DIR/bin/mem-worker.sh
+ExecStart=/bin/bash $WORK_DIR/bin/mem-worker.sh ${MEM_PCT}
 Restart=always
 RestartSec=10
 
@@ -322,14 +326,42 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-# ================= 5. 网络消耗逻辑 =================
-cat << EOF > "$WORK_DIR/bin/net-worker.sh"
+# ================= 5. 网络消耗逻辑（多节点轮询池） =================
+cat << 'EOF' > "$WORK_DIR/bin/net-worker.sh"
 #!/bin/bash
 source /opt/oalive/bin/oalive-lib.sh
 acquire_lock "net"
 trap "release_lock 'net'; exit" INT TERM EXIT
-LIMIT_BPS=\$((${NET_LIMIT} * 125000))
-timeout ${NET_DURATION_SEC} curl -s --limit-rate \${LIMIT_BPS} -o /dev/null "http://speedtest.tele2.net/100MB.zip" || true
+
+NET_LIMIT=$1
+NET_DURATION_SEC=$2
+LIMIT_BPS=$(( NET_LIMIT * 125000 ))
+
+# 16个优质的全球测试文件节点池 (100MB 级别文件)
+URLS=(
+    "http://speedtest.tele2.net/100MB.zip"
+    "http://ipv4.download.thinkbroadband.com/100MB.zip"
+    "http://speedtest.tokyo2.linode.com/100MB-tokyo2.bin"
+    "http://speedtest.singapore.linode.com/100MB-singapore.bin"
+    "http://speedtest.london.linode.com/100MB-london.bin"
+    "http://speedtest.frankfurt.linode.com/100MB-frankfurt.bin"
+    "http://speedtest.belgrade.linode.com/100MB-belgrade.bin"
+    "https://proof.ovh.net/files/100Mb.dat"
+    "https://speed.hetzner.de/100MB.bin"
+    "http://speedtest.wdc01.softlayer.com/downloads/test100.zip"
+    "http://speedtest.sea01.softlayer.com/downloads/test100.zip"
+    "http://speedtest.ams01.softlayer.com/downloads/test100.zip"
+    "http://speedtest.sjc01.softlayer.com/downloads/test100.zip"
+    "http://speedtest.sng01.softlayer.com/downloads/test100.zip"
+    "http://mirror.leaseweb.com/speedtest/100mb.bin"
+    "http://mirror.nl.leaseweb.net/speedtest/100mb.bin"
+)
+
+RANDOM_INDEX=$(( RANDOM % ${#URLS[@]} ))
+TEST_URL=${URLS[$RANDOM_INDEX]}
+
+log_msg "Network worker triggered. Node selected: $TEST_URL"
+timeout ${NET_DURATION_SEC} curl -s --limit-rate ${LIMIT_BPS} -o /dev/null "$TEST_URL" || true
 EOF
 
 cat << EOF > /etc/systemd/system/bandwidth_occupier.service
@@ -338,7 +370,7 @@ Description=OAlive Bandwidth Task
 [Service]
 Type=oneshot
 ExecStartPre=-/bin/rm -rf /var/lock/oalive/net.lock
-ExecStart=/bin/bash $WORK_DIR/bin/net-worker.sh
+ExecStart=/bin/bash $WORK_DIR/bin/net-worker.sh ${NET_LIMIT} ${NET_DURATION_SEC}
 EOF
 
 cat << EOF > /etc/systemd/system/bandwidth_occupier.timer
@@ -360,6 +392,7 @@ systemctl restart cpu-limit.service memory-limit.service bandwidth_occupier.time
 
 echo "=========================================================="
 echo "配置完成！服务已成功在后台运行/更新。"
-echo "核心数: ${CORES}核 (双进程引擎，告别断流)"
+echo "核心数: ${CORES}核 (双进程引擎，加入有机心跳)"
+echo "测速节点: 已分配 16 个全球节点动态轮询"
 echo "查看运行日志命令: tail -f $LOG_FILE"
 echo "=========================================================="
